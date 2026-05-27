@@ -62,7 +62,7 @@ export const marketAPI = {
 
 export const walletAPI = {
   getBalances: () => api.get('/wallet/balances'),
-  getDepositAddress: (coin: string) => api.get(`/wallet/deposit/${coin}`),
+  getDepositAddress: (coin: string, network: string = 'BSC') => api.get(`/deposit/address?coin=${coin}&network=${network}`),
   getDeposits: () => api.get('/wallet/deposits'),
   withdraw: (d: any) => api.post('/wallet/withdraw', d),
   getWithdrawals: () => api.get('/wallet/withdrawals'),

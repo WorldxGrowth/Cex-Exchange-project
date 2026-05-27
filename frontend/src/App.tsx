@@ -24,6 +24,7 @@ import Transfer from './pages/transfer/Transfer';
 import Scanner from './pages/scanner/Scanner';
 import GoogleSuccess from './pages/auth/GoogleSuccess';
 import Chart from './pages/chart/Chart';
+import Orders from './pages/orders/Orders';
 
 const hasValidToken = () => {
   try {
@@ -69,6 +70,7 @@ export default function App() {
             <Route path="edit-profile" element={<EditProfile />} />
             <Route path="2fa" element={<TwoFA />} />
             <Route path="chart/:symbol" element={<Chart />} />
+            <Route path="orders" element={<Orders />} />
             <Route path="support"       element={<Support />} />
           </Route>
           <Route path="*" element={<Navigate to="/home" />} />

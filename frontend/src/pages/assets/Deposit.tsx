@@ -352,7 +352,7 @@ export default function Deposit() {
     setSelectedNetwork(network);
     setLoading(true);
     try {
-      const res: any = await walletAPI.getDepositAddress(selectedCoin.symbol);
+      const res: any = await walletAPI.getDepositAddress(selectedCoin.symbol, network.short_name || "BSC");
       setDepositInfo(res.data);
       setStep('address');
     } catch (err: any) {
@@ -365,6 +365,7 @@ export default function Deposit() {
   // Networks for selected coin (from coins data)
   const coinNetworks = selectedCoin ? [
     { id: selectedCoin.network_id, name: selectedCoin.network_name || selectedCoin.network,
+      short_name: selectedCoin.network || "BSC",
       confirmations: selectedCoin.confirmations || 15 }
   ] : [];
 
