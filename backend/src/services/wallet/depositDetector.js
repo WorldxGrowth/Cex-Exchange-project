@@ -117,7 +117,7 @@ class DepositDetector {
           console.error(`[${key}] scan error:`, e.message)
         );
       }
-    }, 30000);
+    }, 60000);
 
     // Reload addresses every 5 min
     this.reloadInterval = setInterval(() => this.loadAddresses(), 5 * 60 * 1000);
@@ -156,7 +156,7 @@ class DepositDetector {
 
       // Max 100 blocks per scan
       const fromBlock = lastBlock + 1;
-      const toBlock = Math.min(fromBlock + 100, currentBlock);
+      const toBlock = Math.min(fromBlock + 50, currentBlock);
 
       const coins = this.coinMap[networkId] || [];
       if (coins.length === 0) {

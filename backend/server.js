@@ -42,6 +42,7 @@ app.use('/api/v1/admin', require('./src/routes/admin.routes'));
 app.use('/api/v1/listing', require('./src/routes/listing.routes'));
 app.use('/api/v1/referral', require('./src/routes/referral.routes'));
 app.use('/api/v1/notifications', require('./src/routes/notification.routes'));
+app.use('/api/v1/withdrawal', require('./src/routes/withdrawal.routes'));
 app.use('/api/v1/deposit', require('./src/routes/deposit.routes'));
 app.use('/api/v1/orders', require('./src/routes/order.routes'));
 app.use('/api/v1/admin', require('./src/routes/admin.routes'));
