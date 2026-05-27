@@ -6,7 +6,7 @@ const navItems = [
   { icon: Home,       label: 'Home',    path: '/home',    action: null },
   { icon: BarChart2,  label: 'Markets', path: '/markets', action: null },
   { icon: TrendingUp, label: 'Trade',   path: '/trade',   action: null },
-  { icon: Layers,     label: 'Futures', path: '/futures', action: 'soon' },
+  { icon: Layers,     label: 'Futures', path: '/futures', action: null },
   { icon: Wallet,     label: 'Assets',  path: '/assets',  action: null },
 ];
 

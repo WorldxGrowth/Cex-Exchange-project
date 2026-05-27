@@ -25,6 +25,9 @@ import Scanner from './pages/scanner/Scanner';
 import GoogleSuccess from './pages/auth/GoogleSuccess';
 import Chart from './pages/chart/Chart';
 import Orders from './pages/orders/Orders';
+import DepositHistory from './pages/assets/DepositHistory';
+import DepositDetail from './pages/assets/DepositDetail';
+import Futures from './pages/futures/Futures';
 
 const hasValidToken = () => {
   try {
@@ -71,6 +74,10 @@ export default function App() {
             <Route path="2fa" element={<TwoFA />} />
             <Route path="chart/:symbol" element={<Chart />} />
             <Route path="orders" element={<Orders />} />
+            <Route path="futures" element={<Futures />} />
+            <Route path="futures/:symbol" element={<Futures />} />
+            <Route path="deposit-history" element={<DepositHistory />} />
+            <Route path="deposit-detail/:id" element={<DepositDetail />} />
             <Route path="support"       element={<Support />} />
           </Route>
           <Route path="*" element={<Navigate to="/home" />} />
