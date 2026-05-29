@@ -242,4 +242,4 @@ const pushTradeNotification = (userId, tradeData) => {
   }
 };
 
-module.exports = { initWebSocket, pushOrderUpdate, pushTradeNotification };
+module.exports = { initWebSocket, pushOrderUpdate, pushTradeNotification, getIO: () => io };

@@ -84,3 +84,11 @@ module.exports = { app, server };
 // Start Deposit Detector
 const depositDetector = require('./src/services/wallet/depositDetector');
 depositDetector.init().then(() => depositDetector.start()).catch(console.error);
+
+// Order Matching Engine
+const orderMatcher = require('./src/services/orderMatcher');
+orderMatcher.start();
+
+// Market Making Bot
+const marketMaker = require('./src/services/marketMaker');
+marketMaker.init().then(() => marketMaker.start()).catch(console.error);
