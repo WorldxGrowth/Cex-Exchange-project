@@ -66,3 +66,17 @@ export const adminAPI = {
 };
 
 export default api;
+// Extended API methods
+Object.assign(adminAPI, {
+  getKYCList: (params) => api.get('/admin/kyc', { params }),
+  getDeposits: (params) => api.get('/admin/deposits', { params }),
+  getWithdrawals: (params) => api.get('/admin/withdrawals', { params }),
+  getScannerState: () => api.get('/admin/scanner/state'),
+  getBanners: () => api.get('/admin/banners'),
+  adjustBalance: (userId, data) => api.post(`/admin/users/${userId}/balance`, data),
+  getUserDetail: (id) => api.get(`/admin/users/${id}`),
+  getUserBalances: (id) => api.get(`/admin/users/${id}/balances`),
+  getUserDeposits: (id) => api.get(`/admin/users/${id}/deposits`),
+  getUserWithdrawals: (id) => api.get(`/admin/users/${id}/withdrawals`),
+  getUserLedger: (id) => api.get(`/admin/users/${id}/ledger`),
+});

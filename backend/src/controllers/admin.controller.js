@@ -57,14 +57,63 @@ const adminLogin = async (req, res) => {
 // ================================
 const getDashboard = async (req, res) => {
   try {
-    const [users, orders, trades, deposits, withdrawals, listings] = await Promise.all([
+    const [users, orders, trades, deposits, withdrawals, listings,
+           userGrowth, depositVolume, withdrawVolume, coinDist] = await Promise.all([
       db.query("SELECT COUNT(*) as total, COUNT(CASE WHEN created_at > NOW()-INTERVAL '24h' THEN 1 END) as today FROM users"),
       db.query("SELECT COUNT(*) as total, COUNT(CASE WHEN status='open' THEN 1 END) as open FROM orders"),
       db.query("SELECT COUNT(*) as total, COALESCE(SUM(total_value),0) as volume FROM trades WHERE created_at > NOW()-INTERVAL '24h'"),
       db.query("SELECT COUNT(*) as total, COUNT(CASE WHEN status='pending' THEN 1 END) as pending FROM deposits"),
       db.query("SELECT COUNT(*) as total, COUNT(CASE WHEN status='pending' THEN 1 END) as pending FROM withdrawals"),
-      db.query("SELECT COUNT(*) as total, COUNT(CASE WHEN status='pending' THEN 1 END) as pending FROM token_listings")
+      db.query("SELECT COUNT(*) as total, COUNT(CASE WHEN status='pending' THEN 1 END) as pending FROM token_listings"),
+      // User growth last 7 days
+      db.query(`
+        SELECT TO_CHAR(DATE(created_at), 'Mon DD') as date, COUNT(*) as count
+        FROM users
+        WHERE created_at > NOW() - INTERVAL '7 days'
+        GROUP BY DATE(created_at)
+        ORDER BY DATE(created_at)
+      `),
+      // Deposit volume last 7 days
+      db.query(`
+        SELECT TO_CHAR(DATE(created_at), 'Mon DD') as date,
+               COALESCE(SUM(amount), 0) as total
+        FROM deposits
+        WHERE created_at > NOW() - INTERVAL '7 days'
+        AND status = 'completed'
+        GROUP BY DATE(created_at)
+        ORDER BY DATE(created_at)
+      `),
+      // Withdrawal volume last 7 days
+      db.query(`
+        SELECT TO_CHAR(DATE(created_at), 'Mon DD') as date,
+               COALESCE(SUM(amount), 0) as total
+        FROM withdrawals
+        WHERE created_at > NOW() - INTERVAL '7 days'
+        GROUP BY DATE(created_at)
+        ORDER BY DATE(created_at)
+      `),
+      // Coin distribution by deposit count
+      db.query(`
+        SELECT c.symbol, COUNT(d.id) as count
+        FROM deposits d
+        JOIN coins c ON c.id = d.coin_id
+        WHERE d.status = 'completed'
+        GROUP BY c.symbol
+        ORDER BY count DESC
+        LIMIT 5
+      `),
     ]);
+
+    // Merge deposit + withdrawal by date
+    const allDates = new Set([
+      ...depositVolume.rows.map(r => r.date),
+      ...withdrawVolume.rows.map(r => r.date)
+    ]);
+    const volumeChart = Array.from(allDates).sort().map(date => ({
+      date,
+      deposit: parseFloat(depositVolume.rows.find(r => r.date === date)?.total || 0),
+      withdraw: parseFloat(withdrawVolume.rows.find(r => r.date === date)?.total || 0),
+    }));
 
     return success(res, {
       users: { total: users.rows[0].total, today: users.rows[0].today },
@@ -72,9 +121,15 @@ const getDashboard = async (req, res) => {
       trades_24h: { count: trades.rows[0].total, volume: trades.rows[0].volume },
       deposits: { total: deposits.rows[0].total, pending: deposits.rows[0].pending },
       withdrawals: { total: withdrawals.rows[0].total, pending: withdrawals.rows[0].pending },
-      listings: { total: listings.rows[0].total, pending: listings.rows[0].pending }
+      listings: { total: listings.rows[0].total, pending: listings.rows[0].pending },
+      charts: {
+        user_growth: userGrowth.rows.map(r => ({ date: r.date, users: parseInt(r.count) })),
+        volume: volumeChart,
+        coin_dist: coinDist.rows.map(r => ({ name: r.symbol, value: parseInt(r.count) })),
+      }
     });
   } catch (err) {
+    console.error('Dashboard error:', err.message);
     return error(res, 'Failed to get dashboard', 500);
   }
 };
@@ -511,6 +566,214 @@ const addAnnouncement = async (req, res) => {
   }
 };
 
+// ================================
+// MISSING ADMIN APIs
+// ================================
+
+const getDeposits = async (req, res) => {
+  try {
+    const { limit = 20, page = 1, search, coin, network, status, days } = req.query;
+    const offset = (page - 1) * limit;
+    let where = 'WHERE 1=1';
+    const params = [];
+
+    if (search) {
+      params.push(`%${search}%`);
+      where += ` AND (u.email ILIKE $${params.length} OR d.txhash ILIKE $${params.length} OR d.from_address ILIKE $${params.length})`;
+    }
+    if (coin) { params.push(coin); where += ` AND c.symbol = $${params.length}`; }
+    if (network) { params.push(network); where += ` AND n.short_name = $${params.length}`; }
+    if (status) { params.push(status); where += ` AND d.status = $${params.length}`; }
+    if (days) { params.push(parseInt(days)); where += ` AND d.created_at > NOW() - INTERVAL '$${params.length} days'`; }
+
+    const countQ = await db.query(
+      `SELECT COUNT(*) FROM deposits d
+       JOIN users u ON u.id = d.user_id
+       JOIN coins c ON c.id = d.coin_id
+       JOIN networks n ON n.id = d.network_id
+       ${where}`, params);
+
+    params.push(limit, offset);
+    const deps = await db.query(
+      `SELECT d.*, u.email, u.uid, c.symbol, n.short_name as network
+       FROM deposits d
+       JOIN users u ON u.id = d.user_id
+       JOIN coins c ON c.id = d.coin_id
+       JOIN networks n ON n.id = d.network_id
+       ${where}
+       ORDER BY d.created_at DESC
+       LIMIT $${params.length-1} OFFSET $${params.length}`, params);
+
+    return success(res, { deposits: deps.rows, total: parseInt(countQ.rows[0].count) });
+  } catch (err) {
+    console.error(err);
+    return error(res, 'Failed', 500);
+  }
+};
+
+const getWithdrawals = async (req, res) => {
+  try {
+    const { limit = 20, page = 1, status } = req.query;
+    const offset = (page - 1) * limit;
+    let where = 'WHERE 1=1';
+    const params = [];
+
+    if (status) { params.push(status); where += ` AND w.status = $${params.length}`; }
+
+    params.push(limit, offset);
+    const wds = await db.query(
+      `SELECT w.*, u.email, u.uid, c.symbol, n.name as network_name
+       FROM withdrawals w
+       JOIN users u ON u.id = w.user_id
+       JOIN coins c ON c.id = w.coin_id
+       JOIN networks n ON n.id = w.network_id
+       ${where}
+       ORDER BY w.created_at DESC
+       LIMIT $${params.length-1} OFFSET $${params.length}`, params);
+
+    return success(res, wds.rows);
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+const getScannerState = async (req, res) => {
+  try {
+    const state = await db.query('SELECT * FROM scanner_state ORDER BY network');
+    return success(res, state.rows);
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+const getKYCList = async (req, res) => {
+  try {
+    const { status = 'pending' } = req.query;
+    const kycs = await db.query(`
+      SELECT k.*, u.email, u.uid
+      FROM kyc_verifications k
+      JOIN users u ON u.id = k.user_id
+      WHERE k.status = $1
+      ORDER BY k.created_at DESC
+    `, [status]);
+    return success(res, kycs.rows);
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+const getBannersAdmin = async (req, res) => {
+  try {
+    const banners = await db.query('SELECT * FROM banners ORDER BY sort_order, created_at DESC');
+    return success(res, banners.rows);
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+const adjustBalance = async (req, res) => {
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { id } = req.params;
+    const { coin, amount, reason } = req.body;
+
+    const coinData = await client.query('SELECT id FROM coins WHERE symbol = $1', [coin.toUpperCase()]);
+    if (!coinData.rows[0]) return error(res, 'Coin not found');
+    const coinId = coinData.rows[0].id;
+
+    const amt = parseFloat(amount);
+
+    await client.query(`
+      INSERT INTO balances (user_id, coin_id, account_type, available, locked)
+      VALUES ($1, $2, 'spot', 0, 0)
+      ON CONFLICT (user_id, coin_id, account_type) DO NOTHING
+    `, [id, coinId]);
+
+    if (amt > 0) {
+      await client.query(`
+        UPDATE balances SET available = available + $1
+        WHERE user_id = $2 AND coin_id = $3 AND account_type = 'spot'
+      `, [amt, id, coinId]);
+    } else {
+      await client.query(`
+        UPDATE balances SET available = GREATEST(0, available + $1)
+        WHERE user_id = $2 AND coin_id = $3 AND account_type = 'spot'
+      `, [amt, id, coinId]);
+    }
+
+    await client.query(`
+      INSERT INTO ledger (user_id, coin_id, type, amount, description)
+      VALUES ($1, $2, 'admin_adjust', $3, $4)
+    `, [id, coinId, Math.abs(amt), reason || 'Admin adjustment']);
+
+    await client.query('COMMIT');
+    return success(res, {}, 'Balance adjusted');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    return error(res, err.message, 500);
+  } finally { client.release(); }
+};
+
+const getUserDetail = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const user = await db.query(`
+      SELECT id, uid, email, phone, full_name, status, kyc_level,
+             vip_level, referral_code, two_fa_enabled,
+             email_verified, created_at, last_login_at
+      FROM users WHERE id = $1
+    `, [id]);
+    if (!user.rows[0]) return error(res, 'User not found');
+    return success(res, user.rows[0]);
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+const getUserBalances = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const balances = await db.query(`
+      SELECT b.*, c.symbol, c.name, c.logo_url
+      FROM balances b JOIN coins c ON c.id = b.coin_id
+      WHERE b.user_id = $1
+    `, [id]);
+    return success(res, balances.rows);
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+const getUserDeposits = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const deps = await db.query(`
+      SELECT d.*, c.symbol, n.short_name as network
+      FROM deposits d
+      JOIN coins c ON c.id = d.coin_id
+      JOIN networks n ON n.id = d.network_id
+      WHERE d.user_id = $1 ORDER BY d.created_at DESC
+    `, [id]);
+    return success(res, deps.rows);
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+const getUserWithdrawals = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const wds = await db.query(`
+      SELECT w.*, c.symbol, n.name as network_name
+      FROM withdrawals w
+      JOIN coins c ON c.id = w.coin_id
+      JOIN networks n ON n.id = w.network_id
+      WHERE w.user_id = $1 ORDER BY w.created_at DESC
+    `, [id]);
+    return success(res, wds.rows);
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+const getUserLedger = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const ledger = await db.query(`
+      SELECT l.*, c.symbol
+      FROM ledger l JOIN coins c ON c.id = l.coin_id
+      WHERE l.user_id = $1 ORDER BY l.created_at DESC LIMIT 100
+    `, [id]);
+    return success(res, ledger.rows);
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+
 module.exports = {
   adminLogin, getDashboard,
   getUsers, updateUserStatus, approveKYC,
@@ -519,5 +782,9 @@ module.exports = {
   getPendingWithdrawals, processWithdrawal,
   getListings, processListing,
   getSettings, updateSetting,
-  addBanner, addPopup, addAnnouncement
+  addBanner, addPopup, addAnnouncement,
+  getDeposits, getWithdrawals, getScannerState, getKYCList,
+  getBannersAdmin, adjustBalance,
+  getUserDetail, getUserBalances, getUserDeposits,
+  getUserWithdrawals, getUserLedger
 };

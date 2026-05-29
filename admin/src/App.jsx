@@ -4,13 +4,17 @@ import Login from './pages/auth/Login';
 import MainLayout from './components/MainLayout';
 import Dashboard from './pages/dashboard/Dashboard';
 import Users from './pages/users/Users';
-import Coins from './pages/coins/Coins';
+import UserDetail from './pages/users/UserDetail';
+import KYC from './pages/kyc/KYC';
+import Deposits from './pages/deposits/Deposits';
 import Withdrawals from './pages/withdrawals/Withdrawals';
+import Coins from './pages/coins/Coins';
 import Listings from './pages/listings/Listings';
+import Scanner from './pages/scanner/Scanner';
+import Banners from './pages/banners/Banners';
 import Settings from './pages/settings/Settings';
 
 const isAuth = () => !!localStorage.getItem('admin_token');
-
 const PrivateRoute = ({ children }) =>
   isAuth() ? children : <Navigate to="/login" />;
 
@@ -19,8 +23,12 @@ export default function App() {
     <ConfigProvider theme={{
       algorithm: theme.darkAlgorithm,
       token: {
-        colorPrimary: '#1890ff',
+        colorPrimary: '#f0b90b',
+        colorBgBase: '#0b0e11',
+        colorBgContainer: '#1e2026',
+        colorBgElevated: '#2b2f36',
         borderRadius: 8,
+        colorBorderSecondary: '#2b2f36',
       }
     }}>
       <BrowserRouter>
@@ -30,12 +38,17 @@ export default function App() {
             <PrivateRoute><MainLayout /></PrivateRoute>
           }>
             <Route index element={<Navigate to="/dashboard" />} />
-            <Route path="dashboard"   element={<Dashboard />} />
-            <Route path="users"       element={<Users />} />
-            <Route path="coins"       element={<Coins />} />
-            <Route path="withdrawals" element={<Withdrawals />} />
-            <Route path="listings"    element={<Listings />} />
-            <Route path="settings"    element={<Settings />} />
+            <Route path="dashboard"    element={<Dashboard />} />
+            <Route path="users"        element={<Users />} />
+            <Route path="users/:id"    element={<UserDetail />} />
+            <Route path="kyc"          element={<KYC />} />
+            <Route path="deposits"     element={<Deposits />} />
+            <Route path="withdrawals"  element={<Withdrawals />} />
+            <Route path="coins"        element={<Coins />} />
+            <Route path="listings"     element={<Listings />} />
+            <Route path="scanner"      element={<Scanner />} />
+            <Route path="banners"      element={<Banners />} />
+            <Route path="settings"     element={<Settings />} />
           </Route>
         </Routes>
       </BrowserRouter>
