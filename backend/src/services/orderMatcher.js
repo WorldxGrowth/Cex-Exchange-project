@@ -406,11 +406,24 @@ class OrderMatcher {
         DO UPDATE SET available=balances.available+$3, updated_at=NOW()
       `, [buyOrder.user_id, pair.base_coin_id, buyerReceives.toFixed(8)]);
 
-      // Release buyer's locked USDT
-      await client.query(`
-        UPDATE balances SET locked=GREATEST(0,locked-$1), updated_at=NOW()
-        WHERE user_id=$2 AND coin_id=$3 AND account_type='spot'
-      `, [total.toFixed(8), buyOrder.user_id, pair.quote_coin_id]);
+      // Release buyer's locked quote coin.
+// If buy order is fully filled, release any remaining buffer back to available.
+if (buyStatus === 'filled') {
+  await client.query(`
+    UPDATE balances
+    SET available = available + GREATEST(0, locked - $1),
+        locked = 0,
+        updated_at = NOW()
+    WHERE user_id=$2 AND coin_id=$3 AND account_type='spot'
+  `, [total.toFixed(8), buyOrder.user_id, pair.quote_coin_id]);
+} else {
+  await client.query(`
+    UPDATE balances
+    SET locked=GREATEST(0,locked-$1),
+        updated_at=NOW()
+    WHERE user_id=$2 AND coin_id=$3 AND account_type='spot'
+  `, [total.toFixed(8), buyOrder.user_id, pair.quote_coin_id]);
+}
 
       // ── 7. SELLER: credit quote coin (net of fee) ──────
       await client.query(`
