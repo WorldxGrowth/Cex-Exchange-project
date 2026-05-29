@@ -31,7 +31,8 @@ const getCoins = async (req, res) => {
 const getPairs = async (req, res) => {
   try {
     const pairs = await db.query(`
-      SELECT tp.id, tp.symbol, tp.is_active, tp.listing_date,
+      SELECT tp.id, tp.symbol, tp.is_active, tp.is_custom,
+             tp.binance_symbol, tp.listing_date,
              tp.price_precision, tp.qty_precision,
              tp.min_order_qty, tp.min_order_value,
              tp.maker_fee, tp.taker_fee, tp.sort_order,
@@ -56,8 +57,6 @@ const getPairs = async (req, res) => {
 const getTicker = async (req, res) => {
   try {
     const { symbol } = req.params;
-
-    // Check Redis cache first
     const cached = await cache.get(`ticker:${symbol}`);
     if (cached) return success(res, cached);
 
@@ -73,7 +72,6 @@ const getTicker = async (req, res) => {
     `, [symbol.toUpperCase()]);
 
     if (!pair.rows[0]) return error(res, 'Pair not found', 404);
-
     await cache.set(`ticker:${symbol}`, pair.rows[0], 10);
     return success(res, pair.rows[0]);
   } catch (err) {
@@ -81,67 +79,94 @@ const getTicker = async (req, res) => {
   }
 };
 
-// GET order book (from Redis)
+// ─────────────────────────────────────────────────────
+// GET ORDER BOOK
+// is_custom = false → Binance orderbook (pass-through)
+// is_custom = true  → Internal DB orderbook (VDC/custom)
+// ─────────────────────────────────────────────────────
 const getOrderBook = async (req, res) => {
   try {
     const { symbol } = req.params;
-    const { limit = 20 } = req.query;
+    const limit = Math.min(parseInt(req.query.limit || 20), 100);
 
     const pair = await db.query(
-      'SELECT id FROM trading_pairs WHERE symbol = $1',
+      `SELECT id, is_custom, binance_symbol
+       FROM trading_pairs WHERE symbol = $1 AND is_active = true`,
       [symbol.toUpperCase()]
     );
     if (!pair.rows[0]) return error(res, 'Pair not found', 404);
 
-    const pairId = pair.rows[0].id;
-    const { redis } = require('../config/redis');
+    const { id: pairId, is_custom, binance_symbol } = pair.rows[0];
 
-    // Get bids (buy orders) - highest first
-    const bids = await redis.zrevrange(
-      `orderbook:${pairId}:bids`, 0, limit - 1, 'WITHSCORES'
-    );
+    // Binance pass-through
+    if (!is_custom && binance_symbol) {
+      try {
+        const cacheKey = `binance_ob:${binance_symbol}:${limit}`;
+        const cached = await cache.get(cacheKey);
+        if (cached) return success(res, { ...cached, symbol, source: 'binance' });
 
-    // Get asks (sell orders) - lowest first
-    const asks = await redis.zrange(
-      `orderbook:${pairId}:asks`, 0, limit - 1, 'WITHSCORES'
-    );
-
-    // Format
-    const formatOrders = (arr) => {
-      const result = [];
-      for (let i = 0; i < arr.length; i += 2) {
-        result.push({ qty: arr[i], price: arr[i + 1] });
+        const response = await axios.get(
+          'https://api.binance.com/api/v3/depth',
+          { params: { symbol: binance_symbol, limit }, timeout: 3000 }
+        );
+        const data = {
+          bids: response.data.bids.map(([price, qty]) => ({ price, qty })),
+          asks: response.data.asks.map(([price, qty]) => ({ price, qty })),
+          lastUpdateId: response.data.lastUpdateId
+        };
+        await cache.set(cacheKey, data, 2);
+        return success(res, { ...data, symbol, source: 'binance' });
+      } catch (e) {
+        console.error('Binance orderbook fallback to internal:', e.message);
+        // Fallback to internal on Binance failure
       }
-      return result;
-    };
-
-    // If Redis empty, get from DB
-    if (bids.length === 0 && asks.length === 0) {
-      const dbOrders = await db.query(`
-        SELECT side, price, SUM(remaining_qty) as total_qty
-        FROM orders
-        WHERE pair_id = $1 AND status = 'open'
-        GROUP BY side, price
-        ORDER BY
-          CASE WHEN side = 'buy' THEN price END DESC,
-          CASE WHEN side = 'sell' THEN price END ASC
-        LIMIT $2
-      `, [pairId, limit * 2]);
-
-      const dbBids = dbOrders.rows.filter(o => o.side === 'buy')
-        .map(o => ({ price: o.price, qty: o.total_qty }));
-      const dbAsks = dbOrders.rows.filter(o => o.side === 'sell')
-        .map(o => ({ price: o.price, qty: o.total_qty }));
-
-      return success(res, { bids: dbBids, asks: dbAsks, symbol });
     }
 
-    return success(res, {
-      bids: formatOrders(bids),
-      asks: formatOrders(asks),
-      symbol
-    });
+    // Internal orderbook (VDC/custom tokens + Binance fallback)
+    const cacheKey = `internal_ob:${pairId}:${limit}`;
+    const cached = await cache.get(cacheKey);
+    if (cached) return success(res, { ...cached, symbol, source: 'internal' });
+
+    const bids = await db.query(`
+      SELECT CAST(price AS VARCHAR) as price,
+             CAST(SUM(remaining_qty) AS VARCHAR) as qty,
+             COUNT(*) as order_count
+      FROM orders
+      WHERE pair_id = $1
+        AND side = 'buy'
+        AND status IN ('open','partially_filled')
+        AND price IS NOT NULL
+      GROUP BY price
+      ORDER BY price DESC
+      LIMIT $2
+    `, [pairId, limit]);
+
+    const asks = await db.query(`
+      SELECT CAST(price AS VARCHAR) as price,
+             CAST(SUM(remaining_qty) AS VARCHAR) as qty,
+             COUNT(*) as order_count
+      FROM orders
+      WHERE pair_id = $1
+        AND side = 'sell'
+        AND status IN ('open','partially_filled')
+        AND price IS NOT NULL
+      GROUP BY price
+      ORDER BY price ASC
+      LIMIT $2
+    `, [pairId, limit]);
+
+    const bestBid = bids.rows[0]?.price || null;
+    const bestAsk = asks.rows[0]?.price || null;
+    const spread = bestBid && bestAsk
+      ? (parseFloat(bestAsk) - parseFloat(bestBid)).toFixed(6)
+      : null;
+
+    const data = { bids: bids.rows, asks: asks.rows, bestBid, bestAsk, spread };
+    await cache.set(cacheKey, data, 1);
+    return success(res, { ...data, symbol, source: 'internal' });
+
   } catch (err) {
+    console.error('getOrderBook error:', err.message);
     return error(res, 'Failed to get order book', 500);
   }
 };
@@ -150,14 +175,17 @@ const getOrderBook = async (req, res) => {
 const getRecentTrades = async (req, res) => {
   try {
     const { symbol } = req.params;
-    const { limit = 50 } = req.query;
+    const limit = Math.min(parseInt(req.query.limit || 50), 200);
 
     const pair = await db.query(
-      'SELECT id FROM trading_pairs WHERE symbol = $1',
+      'SELECT id, is_custom, binance_symbol FROM trading_pairs WHERE symbol = $1',
       [symbol.toUpperCase()]
     );
     if (!pair.rows[0]) return error(res, 'Pair not found', 404);
 
+    const { id: pairId, is_custom, binance_symbol } = pair.rows[0];
+
+    // Internal trades from our DB (trades table)
     const trades = await db.query(`
       SELECT price, quantity, total_value,
              CASE WHEN is_maker_buy THEN 'sell' ELSE 'buy' END as side,
@@ -166,7 +194,26 @@ const getRecentTrades = async (req, res) => {
       WHERE pair_id = $1
       ORDER BY created_at DESC
       LIMIT $2
-    `, [pair.rows[0].id, limit]);
+    `, [pairId, limit]);
+
+    // If no internal trades and Binance pair → fetch from Binance
+    if (trades.rows.length === 0 && !is_custom && binance_symbol) {
+      try {
+        const response = await axios.get(
+          'https://api.binance.com/api/v3/trades',
+          { params: { symbol: binance_symbol, limit }, timeout: 3000 }
+        );
+        const binanceTrades = response.data.map(t => ({
+          price: t.price,
+          quantity: t.qty,
+          side: t.isBuyerMaker ? 'sell' : 'buy',
+          created_at: new Date(t.time)
+        }));
+        return success(res, binanceTrades);
+      } catch (e) {
+        return success(res, []);
+      }
+    }
 
     return success(res, trades.rows);
   } catch (err) {
@@ -186,26 +233,48 @@ const getKlines = async (req, res) => {
     }
 
     const pair = await db.query(
-      'SELECT id FROM trading_pairs WHERE symbol = $1',
+      'SELECT id, is_custom, binance_symbol FROM trading_pairs WHERE symbol = $1',
       [symbol.toUpperCase()]
     );
     if (!pair.rows[0]) return error(res, 'Pair not found', 404);
 
+    const { id: pairId, is_custom, binance_symbol } = pair.rows[0];
+
+    // Internal klines first
     let query = `
       SELECT open_time, open, high, low, close, volume, close_time
       FROM klines
       WHERE pair_id = $1 AND interval = $2
     `;
-    const params = [pair.rows[0].id, interval];
-
+    const params = [pairId, interval];
     if (startTime) { params.push(new Date(parseInt(startTime))); query += ` AND open_time >= $${params.length}`; }
     if (endTime)   { params.push(new Date(parseInt(endTime)));   query += ` AND open_time <= $${params.length}`; }
-
     params.push(limit);
     query += ` ORDER BY open_time DESC LIMIT $${params.length}`;
 
     const klines = await db.query(query, params);
-    return success(res, klines.rows.reverse());
+    if (klines.rows.length > 0) {
+      return success(res, klines.rows.reverse());
+    }
+
+    // Fallback: Binance klines for non-custom pairs
+    if (!is_custom && binance_symbol) {
+      try {
+        const response = await axios.get(
+          'https://api.binance.com/api/v3/klines',
+          { params: { symbol: binance_symbol, interval, limit }, timeout: 5000 }
+        );
+        const data = response.data.map(k => ({
+          open_time: k[0], open: k[1], high: k[2],
+          low: k[3], close: k[4], volume: k[5], close_time: k[6]
+        }));
+        return success(res, data);
+      } catch (e) {
+        return success(res, []);
+      }
+    }
+
+    return success(res, []);
   } catch (err) {
     return error(res, 'Failed to get klines', 500);
   }
@@ -217,14 +286,12 @@ const updatePricesFromBinance = async () => {
     const coins = await db.query(
       "SELECT id, symbol, price_symbol FROM coins WHERE price_source = 'binance' AND is_active = true"
     );
-
     if (coins.rows.length === 0) return;
 
     const symbols = coins.rows
       .filter(c => c.price_symbol && c.price_symbol !== 'USDTUSDT')
       .map(c => `"${c.price_symbol}"`)
       .join(',');
-
     if (!symbols) return;
 
     const response = await axios.get(
@@ -235,23 +302,18 @@ const updatePricesFromBinance = async () => {
     for (const ticker of response.data) {
       const coin = coins.rows.find(c => c.price_symbol === ticker.symbol);
       if (!coin) continue;
-
       await db.query(`
-        INSERT INTO price_feeds (coin_id, price_usdt, change_24h, volume_24h, high_24h, low_24h, source, updated_at)
+        INSERT INTO price_feeds
+          (coin_id, price_usdt, change_24h, volume_24h, high_24h, low_24h, source, updated_at)
         VALUES ($1, $2, $3, $4, $5, $6, 'binance', NOW())
         ON CONFLICT (coin_id) DO UPDATE SET
           price_usdt = $2, change_24h = $3, volume_24h = $4,
           high_24h = $5, low_24h = $6, source = 'binance', updated_at = NOW()
-      `, [
-        coin.id,
-        parseFloat(ticker.lastPrice),
-        parseFloat(ticker.priceChangePercent),
-        parseFloat(ticker.quoteVolume),
-        parseFloat(ticker.highPrice),
-        parseFloat(ticker.lowPrice)
-      ]);
+      `, [coin.id,
+          parseFloat(ticker.lastPrice), parseFloat(ticker.priceChangePercent),
+          parseFloat(ticker.quoteVolume), parseFloat(ticker.highPrice),
+          parseFloat(ticker.lowPrice)]);
 
-      // Cache mein bhi save karo
       await cache.set(`price:${coin.symbol}`, {
         price: ticker.lastPrice,
         change_24h: ticker.priceChangePercent,
@@ -275,12 +337,7 @@ const updatePricesFromBinance = async () => {
   }
 };
 
-module.exports = { getCoins, getPairs, getTicker, getOrderBook, getRecentTrades, getKlines, updatePricesFromBinance };
-
-// updatePricesFromCoingecko →
-// CoinGecko FREE API se VDC jaise custom
-// coins ka price fetch karta hai jo
-// Binance pe listed nahi hain
+// UPDATE prices from CoinGecko (VDC jaise custom coins)
 const updatePricesFromCoingecko = async () => {
   try {
     const coins = await db.query(
@@ -297,9 +354,9 @@ const updatePricesFromCoingecko = async () => {
     for (const coin of coins.rows) {
       const data = response.data[coin.price_symbol];
       if (!data) continue;
-
       await db.query(`
-        INSERT INTO price_feeds (coin_id, price_usdt, change_24h, volume_24h, source, updated_at)
+        INSERT INTO price_feeds
+          (coin_id, price_usdt, change_24h, volume_24h, source, updated_at)
         VALUES ($1, $2, $3, $4, 'coingecko', NOW())
         ON CONFLICT (coin_id) DO UPDATE SET
           price_usdt = $2, change_24h = $3, volume_24h = $4,
@@ -312,4 +369,8 @@ const updatePricesFromCoingecko = async () => {
   }
 };
 
-module.exports.updatePricesFromCoingecko = updatePricesFromCoingecko;
+module.exports = {
+  getCoins, getPairs, getTicker, getOrderBook,
+  getRecentTrades, getKlines,
+  updatePricesFromBinance, updatePricesFromCoingecko
+};
