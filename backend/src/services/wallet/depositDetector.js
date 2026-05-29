@@ -6,22 +6,28 @@ const ERC20_ABI = [
   'function decimals() view returns (uint8)'
 ];
 
+// Email helper - always safe
+const sendEmailSafe = async (fn, ...args) => {
+  try {
+    const emailService = require('../email/emailService');
+    await emailService[fn](...args);
+  } catch (e) {
+    console.error(`Email ${fn} failed:`, e.message);
+  }
+};
+
 class DepositDetector {
   constructor() {
     this.providers = {};
     this.running = false;
-    this.addressMap = {}; // address → {userId, networkId}
-    this.coinMap = {};    // networkId → [{coinId, symbol, contractAddr, decimals, isNative}]
-    this.networkMap = {}; // networkId → {shortName, rpcUrl, chainId}
+    this.addressMap = {};
+    this.coinMap = {};
+    this.networkMap = {};
   }
 
   async init() {
     try {
-      // Load networks from DB
-      const networks = await db.query(
-        'SELECT * FROM networks WHERE is_active = true'
-      );
-
+      const networks = await db.query('SELECT * FROM networks WHERE is_active = true');
       for (const net of networks.rows) {
         if (!net.rpc_url) continue;
         this.networkMap[net.id] = net;
@@ -36,7 +42,6 @@ class DepositDetector {
         }
       }
 
-      // Load coins from DB
       const coins = await db.query(`
         SELECT c.*, n.short_name as network_name
         FROM coins c
@@ -52,7 +57,7 @@ class DepositDetector {
           contractAddr: coin.contract_address,
           decimals: coin.decimals,
           confirmations: coin.confirmations || 3,
-          isNative: !coin.contract_address // No contract = native coin
+          isNative: !coin.contract_address
         });
       }
 
@@ -110,7 +115,6 @@ class DepositDetector {
     this.running = true;
     console.log('🔍 Deposit Scanner started');
 
-    // Scan every 30 seconds
     this.scanInterval = setInterval(async () => {
       for (const key of Object.keys(this.providers)) {
         this.scanNetwork(key).catch(e =>
@@ -119,10 +123,8 @@ class DepositDetector {
       }
     }, 60000);
 
-    // Reload addresses every 5 min
     this.reloadInterval = setInterval(() => this.loadAddresses(), 5 * 60 * 1000);
 
-    // Initial scan after 5 sec
     setTimeout(() => {
       for (const key of Object.keys(this.providers)) {
         this.scanNetwork(key).catch(() => {});
@@ -146,7 +148,6 @@ class DepositDetector {
       const currentBlock = await provider.getBlockNumber();
       let lastBlock = await this.getLastBlock(shortName);
 
-      // First run - start from current
       if (lastBlock === 0) {
         await this.saveLastBlock(shortName, currentBlock);
         return;
@@ -154,7 +155,6 @@ class DepositDetector {
 
       if (lastBlock >= currentBlock) return;
 
-      // Max 100 blocks per scan
       const fromBlock = lastBlock + 1;
       const toBlock = Math.min(fromBlock + 50, currentBlock);
 
@@ -166,13 +166,11 @@ class DepositDetector {
 
       console.log(`[${shortName}] Scanning ${fromBlock}→${toBlock}`);
 
-      // Native coins
       const nativeCoins = coins.filter(c => c.isNative);
       if (nativeCoins.length > 0) {
         await this.scanNative(provider, networkId, shortName, fromBlock, toBlock, nativeCoins);
       }
 
-      // ERC20 tokens
       const erc20Coins = coins.filter(c => !c.isNative && c.contractAddr);
       for (const coin of erc20Coins) {
         await this.scanERC20(provider, networkId, shortName, fromBlock, toBlock, coin);
@@ -199,7 +197,6 @@ class DepositDetector {
           const amount = parseFloat(ethers.utils.formatEther(tx.value));
           if (amount < 0.00001) continue;
 
-          // Match coin by network
           const coin = nativeCoins[0];
           await this.creditDeposit({
             networkId, shortName,
@@ -256,16 +253,15 @@ class DepositDetector {
     try {
       await client.query('BEGIN');
 
-      // DUPLICATE CHECK - txhash unique constraint
+      // Duplicate check
       const existing = await client.query(
         'SELECT id FROM deposits WHERE txhash = $1', [txHash]
       );
       if (existing.rows.length > 0) {
         await client.query('ROLLBACK');
-        return; // Already processed!
+        return;
       }
 
-      // Get balance before
       const balRow = await client.query(`
         SELECT available FROM balances
         WHERE user_id = $1 AND coin_id = $2 AND account_type = 'spot'
@@ -273,7 +269,6 @@ class DepositDetector {
       `, [userId, coinId]);
       const balBefore = parseFloat(balRow.rows[0]?.available || 0);
 
-      // Insert deposit record
       await client.query(`
         INSERT INTO deposits
           (user_id, coin_id, network_id, txhash, from_address,
@@ -281,17 +276,13 @@ class DepositDetector {
         VALUES ($1,$2,$3,$4,$5,$6,$7,'completed',NOW())
       `, [userId, coinId, networkId, txHash, fromAddress, toAddress, amount]);
 
-      // Credit balance - upsert
       await client.query(`
         INSERT INTO balances (user_id, coin_id, account_type, available, locked)
         VALUES ($1,$2,'spot',$3,0)
         ON CONFLICT (user_id, coin_id, account_type)
-        DO UPDATE SET
-          available = balances.available + $3,
-          updated_at = NOW()
+        DO UPDATE SET available = balances.available + $3, updated_at = NOW()
       `, [userId, coinId, amount]);
 
-      // Ledger entry
       await client.query(`
         INSERT INTO ledger
           (user_id, coin_id, type, amount, balance_before, balance_after,
@@ -303,6 +294,18 @@ class DepositDetector {
       await client.query('COMMIT');
 
       console.log(`✅ DEPOSIT: User ${userId} | +${amount} ${coinSymbol} | ${shortName} | TX: ${txHash.slice(0,10)}...`);
+
+      // Deposit email - safe async
+      db.query('SELECT email FROM users WHERE id = $1', [userId])
+        .then(u => {
+          if (u.rows[0]) {
+            sendEmailSafe('sendDepositEmail', u.rows[0], {
+              symbol: coinSymbol, amount,
+              network: shortName, txhash: txHash
+            });
+          }
+        })
+        .catch(() => {});
 
     } catch (err) {
       await client.query('ROLLBACK');

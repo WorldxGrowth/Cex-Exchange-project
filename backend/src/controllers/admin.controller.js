@@ -3,12 +3,18 @@ const bcrypt = require('bcryptjs');
 const { success, error } = require('../utils/response');
 const { generateTokens } = require('../utils/jwt');
 
+// Email helper - always safe
+const sendEmailSafe = async (fn, ...args) => {
+  try {
+    const emailService = require('../services/email/emailService');
+    await emailService[fn](...args);
+  } catch (e) {
+    console.error(`Email ${fn} failed:`, e.message);
+  }
+};
+
 // ================================
 // ADMIN AUTH
-// admin.controller.js →
-// Admin panel ka brain - users, coins,
-// listings, withdrawals sab yahan se
-// manage hota hai
 // ================================
 const adminLogin = async (req, res) => {
   try {
@@ -22,13 +28,10 @@ const adminLogin = async (req, res) => {
 
     if (!admin.rows[0]) return error(res, 'Invalid credentials');
 
-    // First time login - set password
     if (admin.rows[0].password_hash === '$2a$12$placeholder_will_be_set_via_api') {
       const newHash = await bcrypt.hash(password, 12);
-      await db.query(
-        'UPDATE admin_users SET password_hash = $1 WHERE id = $2',
-        [newHash, admin.rows[0].id]
-      );
+      await db.query('UPDATE admin_users SET password_hash = $1 WHERE id = $2',
+        [newHash, admin.rows[0].id]);
       const { accessToken } = generateTokens(admin.rows[0].id);
       return success(res, {
         access_token: accessToken,
@@ -65,46 +68,20 @@ const getDashboard = async (req, res) => {
       db.query("SELECT COUNT(*) as total, COUNT(CASE WHEN status='pending' THEN 1 END) as pending FROM deposits"),
       db.query("SELECT COUNT(*) as total, COUNT(CASE WHEN status='pending' THEN 1 END) as pending FROM withdrawals"),
       db.query("SELECT COUNT(*) as total, COUNT(CASE WHEN status='pending' THEN 1 END) as pending FROM token_listings"),
-      // User growth last 7 days
-      db.query(`
-        SELECT TO_CHAR(DATE(created_at), 'Mon DD') as date, COUNT(*) as count
-        FROM users
-        WHERE created_at > NOW() - INTERVAL '7 days'
-        GROUP BY DATE(created_at)
-        ORDER BY DATE(created_at)
-      `),
-      // Deposit volume last 7 days
-      db.query(`
-        SELECT TO_CHAR(DATE(created_at), 'Mon DD') as date,
-               COALESCE(SUM(amount), 0) as total
-        FROM deposits
-        WHERE created_at > NOW() - INTERVAL '7 days'
-        AND status = 'completed'
-        GROUP BY DATE(created_at)
-        ORDER BY DATE(created_at)
-      `),
-      // Withdrawal volume last 7 days
-      db.query(`
-        SELECT TO_CHAR(DATE(created_at), 'Mon DD') as date,
-               COALESCE(SUM(amount), 0) as total
-        FROM withdrawals
-        WHERE created_at > NOW() - INTERVAL '7 days'
-        GROUP BY DATE(created_at)
-        ORDER BY DATE(created_at)
-      `),
-      // Coin distribution by deposit count
-      db.query(`
-        SELECT c.symbol, COUNT(d.id) as count
-        FROM deposits d
-        JOIN coins c ON c.id = d.coin_id
-        WHERE d.status = 'completed'
-        GROUP BY c.symbol
-        ORDER BY count DESC
-        LIMIT 5
-      `),
+      db.query(`SELECT TO_CHAR(DATE(created_at), 'Mon DD') as date, COUNT(*) as count
+        FROM users WHERE created_at > NOW() - INTERVAL '7 days'
+        GROUP BY DATE(created_at) ORDER BY DATE(created_at)`),
+      db.query(`SELECT TO_CHAR(DATE(created_at), 'Mon DD') as date, COALESCE(SUM(amount), 0) as total
+        FROM deposits WHERE created_at > NOW() - INTERVAL '7 days' AND status = 'completed'
+        GROUP BY DATE(created_at) ORDER BY DATE(created_at)`),
+      db.query(`SELECT TO_CHAR(DATE(created_at), 'Mon DD') as date, COALESCE(SUM(amount), 0) as total
+        FROM withdrawals WHERE created_at > NOW() - INTERVAL '7 days'
+        GROUP BY DATE(created_at) ORDER BY DATE(created_at)`),
+      db.query(`SELECT c.symbol, COUNT(d.id) as count FROM deposits d
+        JOIN coins c ON c.id = d.coin_id WHERE d.status = 'completed'
+        GROUP BY c.symbol ORDER BY count DESC LIMIT 5`),
     ]);
 
-    // Merge deposit + withdrawal by date
     const allDates = new Set([
       ...depositVolume.rows.map(r => r.date),
       ...withdrawVolume.rows.map(r => r.date)
@@ -142,11 +119,9 @@ const getUsers = async (req, res) => {
     const { page = 1, limit = 20, search, status, kyc_level } = req.query;
     const offset = (page - 1) * limit;
 
-    let query = `
-      SELECT id, uid, email, phone, status, kyc_level, vip_level,
+    let query = `SELECT id, uid, email, phone, status, kyc_level, vip_level,
              referral_code, email_verified, created_at, last_login_at
-      FROM users WHERE 1=1
-    `;
+      FROM users WHERE 1=1`;
     const params = [];
 
     if (search) {
@@ -156,7 +131,10 @@ const getUsers = async (req, res) => {
     if (status) { params.push(status); query += ` AND status = $${params.length}`; }
     if (kyc_level !== undefined) { params.push(kyc_level); query += ` AND kyc_level = $${params.length}`; }
 
-    const countResult = await db.query(query.replace('SELECT id, uid, email, phone, status, kyc_level, vip_level,\n             referral_code, email_verified, created_at, last_login_at', 'SELECT COUNT(*)'), params);
+    const countResult = await db.query(
+      query.replace('SELECT id, uid, email, phone, status, kyc_level, vip_level,\n             referral_code, email_verified, created_at, last_login_at', 'SELECT COUNT(*)'),
+      params
+    );
 
     params.push(limit, offset);
     query += ` ORDER BY created_at DESC LIMIT $${params.length-1} OFFSET $${params.length}`;
@@ -173,15 +151,10 @@ const updateUserStatus = async (req, res) => {
     const { id } = req.params;
     const { status, reason } = req.body;
 
-    if (!['active','suspended','banned'].includes(status)) {
+    if (!['active','suspended','banned'].includes(status))
       return error(res, 'Invalid status');
-    }
 
-    await db.query(
-      'UPDATE users SET status = $1, updated_at = NOW() WHERE id = $2',
-      [status, id]
-    );
-
+    await db.query('UPDATE users SET status = $1, updated_at = NOW() WHERE id = $2', [status, id]);
     return success(res, {}, `User ${status} successfully`);
   } catch (err) {
     return error(res, 'Failed to update user', 500);
@@ -193,25 +166,26 @@ const approveKYC = async (req, res) => {
     const { kyc_id } = req.params;
     const { action, rejection_reason } = req.body;
 
-    if (!['approved','rejected'].includes(action)) {
+    if (!['approved','rejected'].includes(action))
       return error(res, 'action must be approved or rejected');
-    }
 
     const kyc = await db.query('SELECT * FROM kyc_verifications WHERE id = $1', [kyc_id]);
     if (!kyc.rows[0]) return error(res, 'KYC not found');
 
     await db.query(`
-      UPDATE kyc_verifications SET
-        status = $1, rejection_reason = $2,
-        reviewed_by = $3, reviewed_at = NOW()
-      WHERE id = $4
+      UPDATE kyc_verifications SET status = $1, rejection_reason = $2,
+        reviewed_by = $3, reviewed_at = NOW() WHERE id = $4
     `, [action, rejection_reason || null, req.adminId, kyc_id]);
 
     if (action === 'approved') {
-      await db.query(
-        'UPDATE users SET kyc_level = $1 WHERE id = $2',
-        [kyc.rows[0].level, kyc.rows[0].user_id]
-      );
+      await db.query('UPDATE users SET kyc_level = $1 WHERE id = $2',
+        [kyc.rows[0].level || 1, kyc.rows[0].user_id]);
+    }
+
+    // KYC email - safe async
+    const userRes = await db.query('SELECT email FROM users WHERE id = $1', [kyc.rows[0].user_id]);
+    if (userRes.rows[0]) {
+      sendEmailSafe('sendKYCEmail', userRes.rows[0], action, rejection_reason);
     }
 
     return success(res, {}, `KYC ${action} successfully`);
@@ -240,26 +214,21 @@ const getCoinsAdmin = async (req, res) => {
 
 const addCoin = async (req, res) => {
   try {
-    const {
-      symbol, name, logo_url, coin_type, contract_address,
-      decimals, network_id, min_deposit, min_withdraw,
-      withdraw_fee, confirmations, price_source, price_symbol
-    } = req.body;
+    const { symbol, name, logo_url, coin_type, contract_address,
+            decimals, network_id, min_deposit, min_withdraw,
+            withdraw_fee, confirmations, price_source, price_symbol } = req.body;
 
-    if (!symbol || !name || !network_id) {
+    if (!symbol || !name || !network_id)
       return error(res, 'symbol, name, network_id required');
-    }
 
     const coin = await db.query(`
       INSERT INTO coins (symbol, name, logo_url, coin_type, contract_address,
         decimals, network_id, min_deposit, min_withdraw, withdraw_fee,
         confirmations, price_source, price_symbol)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-      RETURNING *
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *
     `, [symbol.toUpperCase(), name, logo_url, coin_type, contract_address,
         decimals || 18, network_id, min_deposit || 0, min_withdraw || 0,
-        withdraw_fee || 0, confirmations || 12, price_source || 'binance',
-        price_symbol]);
+        withdraw_fee || 0, confirmations || 12, price_source || 'binance', price_symbol]);
 
     return success(res, coin.rows[0], 'Coin added successfully', 201);
   } catch (err) {
@@ -280,20 +249,13 @@ const updateCoin = async (req, res) => {
     let i = 1;
 
     for (const [key, val] of Object.entries(fields)) {
-      if (allowed.includes(key)) {
-        updates.push(`${key} = $${i++}`);
-        values.push(val);
-      }
+      if (allowed.includes(key)) { updates.push(`${key} = $${i++}`); values.push(val); }
     }
 
     if (updates.length === 0) return error(res, 'No valid fields to update');
 
     values.push(id);
-    await db.query(
-      `UPDATE coins SET ${updates.join(', ')} WHERE id = $${i}`,
-      values
-    );
-
+    await db.query(`UPDATE coins SET ${updates.join(', ')} WHERE id = $${i}`, values);
     return success(res, {}, 'Coin updated successfully');
   } catch (err) {
     return error(res, 'Failed to update coin', 500);
@@ -308,7 +270,6 @@ const addTradingPair = async (req, res) => {
     const { base_coin_id, quote_coin_id, maker_fee, taker_fee,
             min_order_qty, min_order_value, listing_date } = req.body;
 
-    // Get symbols
     const base = await db.query('SELECT symbol FROM coins WHERE id = $1', [base_coin_id]);
     const quote = await db.query('SELECT symbol FROM coins WHERE id = $1', [quote_coin_id]);
 
@@ -320,8 +281,7 @@ const addTradingPair = async (req, res) => {
       INSERT INTO trading_pairs
         (base_coin_id, quote_coin_id, symbol, maker_fee, taker_fee,
          min_order_qty, min_order_value, listing_date, is_active)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8, $9)
-      RETURNING *
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *
     `, [base_coin_id, quote_coin_id, symbol,
         maker_fee || 0.001, taker_fee || 0.001,
         min_order_qty || 0.0001, min_order_value || 1,
@@ -359,9 +319,8 @@ const processWithdrawal = async (req, res) => {
     const { id } = req.params;
     const { action, txhash, admin_note } = req.body;
 
-    if (!['approve','reject'].includes(action)) {
+    if (!['approve','reject'].includes(action))
       return error(res, 'action must be approve or reject');
-    }
 
     const withdrawal = await db.query('SELECT * FROM withdrawals WHERE id = $1', [id]);
     if (!withdrawal.rows[0]) return error(res, 'Withdrawal not found');
@@ -371,18 +330,15 @@ const processWithdrawal = async (req, res) => {
     if (action === 'approve') {
       await db.query(`
         UPDATE withdrawals SET status = 'completed', txhash = $1,
-          admin_note = $2, updated_at = NOW()
-        WHERE id = $3
+          admin_note = $2, updated_at = NOW() WHERE id = $3
       `, [txhash, admin_note, id]);
 
-      // Release locked balance
       await db.query(`
         UPDATE balances SET locked = locked - $1
         WHERE user_id = $2 AND coin_id = $3 AND account_type = 'spot'
       `, [w.amount, w.user_id, w.coin_id]);
 
     } else {
-      // Reject - refund
       await db.query(`
         UPDATE withdrawals SET status = 'cancelled', admin_note = $1, updated_at = NOW()
         WHERE id = $2
@@ -406,12 +362,10 @@ const processWithdrawal = async (req, res) => {
 const getListings = async (req, res) => {
   try {
     const { status } = req.query;
-    let query = `
-      SELECT tl.*, u.email, u.uid, n.name as network_name
+    let query = `SELECT tl.*, u.email, u.uid, n.name as network_name
       FROM token_listings tl
       JOIN users u ON u.id = tl.applicant_user_id
-      LEFT JOIN networks n ON n.id = tl.network_id
-    `;
+      LEFT JOIN networks n ON n.id = tl.network_id`;
     const params = [];
     if (status) { params.push(status); query += ` WHERE tl.status = $1`; }
     query += ' ORDER BY tl.created_at DESC';
@@ -428,9 +382,8 @@ const processListing = async (req, res) => {
     const { id } = req.params;
     const { action, admin_notes } = req.body;
 
-    if (!['approve','reject'].includes(action)) {
+    if (!['approve','reject'].includes(action))
       return error(res, 'action must be approve or reject');
-    }
 
     const listing = await db.query('SELECT * FROM token_listings WHERE id = $1', [id]);
     if (!listing.rows[0]) return error(res, 'Listing not found');
@@ -444,33 +397,25 @@ const processListing = async (req, res) => {
     );
 
     if (action === 'approve') {
-      // Add coin to coins table
       const coin = await db.query(`
         INSERT INTO coins (symbol, name, logo_url, coin_type, contract_address,
           network_id, price_source, is_active, listed_at)
         VALUES ($1,$2,$3,'custom',$4,$5,'custom',true,NOW())
-        ON CONFLICT (symbol) DO UPDATE SET is_active = true
-        RETURNING id
-      `, [l.token_symbol, l.token_name, l.token_logo_url,
-          l.contract_address, l.network_id]);
+        ON CONFLICT (symbol) DO UPDATE SET is_active = true RETURNING id
+      `, [l.token_symbol, l.token_name, l.token_logo_url, l.contract_address, l.network_id]);
 
-      // Create trading pair with USDT
       const usdtCoin = await db.query("SELECT id FROM coins WHERE symbol = 'USDT'");
       const symbol = l.token_symbol + 'USDT';
 
       await db.query(`
-        INSERT INTO trading_pairs
-          (base_coin_id, quote_coin_id, symbol, is_active, listing_date)
-        VALUES ($1,$2,$3,true,$4)
-        ON CONFLICT (symbol) DO NOTHING
+        INSERT INTO trading_pairs (base_coin_id, quote_coin_id, symbol, is_active, listing_date)
+        VALUES ($1,$2,$3,true,$4) ON CONFLICT (symbol) DO NOTHING
       `, [coin.rows[0].id, usdtCoin.rows[0].id, symbol, l.listing_date || new Date()]);
 
-      // Set initial price
       if (l.initial_price) {
         await db.query(`
           INSERT INTO price_feeds (coin_id, price_usdt, source)
-          VALUES ($1,$2,'custom')
-          ON CONFLICT (coin_id) DO UPDATE SET price_usdt = $2
+          VALUES ($1,$2,'custom') ON CONFLICT (coin_id) DO UPDATE SET price_usdt = $2
         `, [coin.rows[0].id, l.initial_price]);
       }
     }
@@ -500,31 +445,25 @@ const updateSetting = async (req, res) => {
   try {
     const { key } = req.params;
     const { value } = req.body;
-
-    await db.query(`
-      UPDATE system_settings SET value = $1, updated_at = NOW()
-      WHERE key = $2
-    `, [value, key]);
-
+    await db.query('UPDATE system_settings SET value = $1, updated_at = NOW() WHERE key = $2', [value, key]);
     return success(res, {}, 'Setting updated');
   } catch (err) {
     return error(res, 'Failed to update setting', 500);
   }
 };
 
-// BANNER management
+// ================================
+// BANNER / POPUP / ANNOUNCEMENT
+// ================================
 const addBanner = async (req, res) => {
   try {
     const { title, image_url, link_url, link_type, position, platform, sort_order, starts_at, ends_at } = req.body;
-
     const banner = await db.query(`
       INSERT INTO banners (title, image_url, link_url, link_type, position, platform, sort_order, starts_at, ends_at, created_by)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-      RETURNING *
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *
     `, [title, image_url, link_url, link_type || 'external',
         position || 'home_top', platform || 'all',
         sort_order || 0, starts_at, ends_at, req.adminId]);
-
     return success(res, banner.rows[0], 'Banner added', 201);
   } catch (err) {
     return error(res, 'Failed to add banner', 500);
@@ -534,32 +473,25 @@ const addBanner = async (req, res) => {
 const addPopup = async (req, res) => {
   try {
     const { title, content, image_url, button_text, button_url, popup_type, platform, show_once, starts_at, ends_at } = req.body;
-
     const popup = await db.query(`
       INSERT INTO app_popups (title, content, image_url, button_text, button_url, popup_type, platform, show_once, starts_at, ends_at, created_by)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
-      RETURNING *
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *
     `, [title, content, image_url, button_text, button_url,
         popup_type || 'announcement', platform || 'all',
         show_once !== false, starts_at, ends_at, req.adminId]);
-
     return success(res, popup.rows[0], 'Popup added', 201);
   } catch (err) {
     return error(res, 'Failed to add popup', 500);
   }
 };
 
-// ANNOUNCEMENT
 const addAnnouncement = async (req, res) => {
   try {
     const { title, content, type, expires_at } = req.body;
-
     const ann = await db.query(`
       INSERT INTO announcements (title, content, type, is_published, published_at, expires_at, created_by)
-      VALUES ($1,$2,$3,true,NOW(),$4,$5)
-      RETURNING *
+      VALUES ($1,$2,$3,true,NOW(),$4,$5) RETURNING *
     `, [title, content, type || 'system', expires_at, req.adminId]);
-
     return success(res, ann.rows[0], 'Announcement published', 201);
   } catch (err) {
     return error(res, 'Failed to add announcement', 500);
@@ -567,9 +499,8 @@ const addAnnouncement = async (req, res) => {
 };
 
 // ================================
-// MISSING ADMIN APIs
+// EXTENDED ADMIN APIs
 // ================================
-
 const getDeposits = async (req, res) => {
   try {
     const { limit = 20, page = 1, search, coin, network, status, days } = req.query;
@@ -590,8 +521,7 @@ const getDeposits = async (req, res) => {
       `SELECT COUNT(*) FROM deposits d
        JOIN users u ON u.id = d.user_id
        JOIN coins c ON c.id = d.coin_id
-       JOIN networks n ON n.id = d.network_id
-       ${where}`, params);
+       JOIN networks n ON n.id = d.network_id ${where}`, params);
 
     params.push(limit, offset);
     const deps = await db.query(
@@ -600,8 +530,7 @@ const getDeposits = async (req, res) => {
        JOIN users u ON u.id = d.user_id
        JOIN coins c ON c.id = d.coin_id
        JOIN networks n ON n.id = d.network_id
-       ${where}
-       ORDER BY d.created_at DESC
+       ${where} ORDER BY d.created_at DESC
        LIMIT $${params.length-1} OFFSET $${params.length}`, params);
 
     return success(res, { deposits: deps.rows, total: parseInt(countQ.rows[0].count) });
@@ -627,8 +556,7 @@ const getWithdrawals = async (req, res) => {
        JOIN users u ON u.id = w.user_id
        JOIN coins c ON c.id = w.coin_id
        JOIN networks n ON n.id = w.network_id
-       ${where}
-       ORDER BY w.created_at DESC
+       ${where} ORDER BY w.created_at DESC
        LIMIT $${params.length-1} OFFSET $${params.length}`, params);
 
     return success(res, wds.rows);
@@ -646,11 +574,9 @@ const getKYCList = async (req, res) => {
   try {
     const { status = 'pending' } = req.query;
     const kycs = await db.query(`
-      SELECT k.*, u.email, u.uid
-      FROM kyc_verifications k
+      SELECT k.*, u.email, u.uid FROM kyc_verifications k
       JOIN users u ON u.id = k.user_id
-      WHERE k.status = $1
-      ORDER BY k.created_at DESC
+      WHERE k.status = $1 ORDER BY k.created_at DESC
     `, [status]);
     return success(res, kycs.rows);
   } catch (err) { return error(res, 'Failed', 500); }
@@ -673,31 +599,24 @@ const adjustBalance = async (req, res) => {
     const coinData = await client.query('SELECT id FROM coins WHERE symbol = $1', [coin.toUpperCase()]);
     if (!coinData.rows[0]) return error(res, 'Coin not found');
     const coinId = coinData.rows[0].id;
-
     const amt = parseFloat(amount);
 
     await client.query(`
       INSERT INTO balances (user_id, coin_id, account_type, available, locked)
-      VALUES ($1, $2, 'spot', 0, 0)
-      ON CONFLICT (user_id, coin_id, account_type) DO NOTHING
+      VALUES ($1, $2, 'spot', 0, 0) ON CONFLICT (user_id, coin_id, account_type) DO NOTHING
     `, [id, coinId]);
 
     if (amt > 0) {
-      await client.query(`
-        UPDATE balances SET available = available + $1
-        WHERE user_id = $2 AND coin_id = $3 AND account_type = 'spot'
-      `, [amt, id, coinId]);
+      await client.query(`UPDATE balances SET available = available + $1
+        WHERE user_id = $2 AND coin_id = $3 AND account_type = 'spot'`, [amt, id, coinId]);
     } else {
-      await client.query(`
-        UPDATE balances SET available = GREATEST(0, available + $1)
-        WHERE user_id = $2 AND coin_id = $3 AND account_type = 'spot'
-      `, [amt, id, coinId]);
+      await client.query(`UPDATE balances SET available = GREATEST(0, available + $1)
+        WHERE user_id = $2 AND coin_id = $3 AND account_type = 'spot'`, [amt, id, coinId]);
     }
 
-    await client.query(`
-      INSERT INTO ledger (user_id, coin_id, type, amount, description)
-      VALUES ($1, $2, 'admin_adjust', $3, $4)
-    `, [id, coinId, Math.abs(amt), reason || 'Admin adjustment']);
+    await client.query(`INSERT INTO ledger (user_id, coin_id, type, amount, description)
+      VALUES ($1, $2, 'admin_adjust', $3, $4)`,
+      [id, coinId, Math.abs(amt), reason || 'Admin adjustment']);
 
     await client.query('COMMIT');
     return success(res, {}, 'Balance adjusted');
@@ -714,8 +633,7 @@ const getUserDetail = async (req, res) => {
       SELECT id, uid, email, phone, full_name, status, kyc_level,
              vip_level, referral_code, two_fa_enabled,
              email_verified, created_at, last_login_at
-      FROM users WHERE id = $1
-    `, [id]);
+      FROM users WHERE id = $1`, [id]);
     if (!user.rows[0]) return error(res, 'User not found');
     return success(res, user.rows[0]);
   } catch (err) { return error(res, 'Failed', 500); }
@@ -726,9 +644,7 @@ const getUserBalances = async (req, res) => {
     const { id } = req.params;
     const balances = await db.query(`
       SELECT b.*, c.symbol, c.name, c.logo_url
-      FROM balances b JOIN coins c ON c.id = b.coin_id
-      WHERE b.user_id = $1
-    `, [id]);
+      FROM balances b JOIN coins c ON c.id = b.coin_id WHERE b.user_id = $1`, [id]);
     return success(res, balances.rows);
   } catch (err) { return error(res, 'Failed', 500); }
 };
@@ -737,12 +653,9 @@ const getUserDeposits = async (req, res) => {
   try {
     const { id } = req.params;
     const deps = await db.query(`
-      SELECT d.*, c.symbol, n.short_name as network
-      FROM deposits d
-      JOIN coins c ON c.id = d.coin_id
-      JOIN networks n ON n.id = d.network_id
-      WHERE d.user_id = $1 ORDER BY d.created_at DESC
-    `, [id]);
+      SELECT d.*, c.symbol, n.short_name as network FROM deposits d
+      JOIN coins c ON c.id = d.coin_id JOIN networks n ON n.id = d.network_id
+      WHERE d.user_id = $1 ORDER BY d.created_at DESC`, [id]);
     return success(res, deps.rows);
   } catch (err) { return error(res, 'Failed', 500); }
 };
@@ -751,12 +664,9 @@ const getUserWithdrawals = async (req, res) => {
   try {
     const { id } = req.params;
     const wds = await db.query(`
-      SELECT w.*, c.symbol, n.name as network_name
-      FROM withdrawals w
-      JOIN coins c ON c.id = w.coin_id
-      JOIN networks n ON n.id = w.network_id
-      WHERE w.user_id = $1 ORDER BY w.created_at DESC
-    `, [id]);
+      SELECT w.*, c.symbol, n.name as network_name FROM withdrawals w
+      JOIN coins c ON c.id = w.coin_id JOIN networks n ON n.id = w.network_id
+      WHERE w.user_id = $1 ORDER BY w.created_at DESC`, [id]);
     return success(res, wds.rows);
   } catch (err) { return error(res, 'Failed', 500); }
 };
@@ -765,14 +675,11 @@ const getUserLedger = async (req, res) => {
   try {
     const { id } = req.params;
     const ledger = await db.query(`
-      SELECT l.*, c.symbol
-      FROM ledger l JOIN coins c ON c.id = l.coin_id
-      WHERE l.user_id = $1 ORDER BY l.created_at DESC LIMIT 100
-    `, [id]);
+      SELECT l.*, c.symbol FROM ledger l JOIN coins c ON c.id = l.coin_id
+      WHERE l.user_id = $1 ORDER BY l.created_at DESC LIMIT 100`, [id]);
     return success(res, ledger.rows);
   } catch (err) { return error(res, 'Failed', 500); }
 };
-
 
 module.exports = {
   adminLogin, getDashboard,
