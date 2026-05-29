@@ -2,30 +2,18 @@ const { Server } = require('socket.io');
 const { redis } = require('../config/redis');
 const db = require('../config/database');
 const { verifyToken } = require('../utils/jwt');
-const axios = require('axios');
 
 let io;
 
 const initWebSocket = (server) => {
   io = new Server(server, {
-    cors: {
-      origin: '*',
-      methods: ['GET', 'POST']
-    },
+    cors: { origin: '*', methods: ['GET', 'POST'] },
     transports: ['websocket', 'polling']
   });
 
-  // ================================
-  // CONNECTION HANDLER
-  // socket.js →
-  // WebSocket server hai - client connect
-  // karta hai, price/orderbook subscribe
-  // karta hai, real-time data push hota hai
-  // ================================
   io.on('connection', async (socket) => {
     console.log(`🔌 Client connected: ${socket.id}`);
 
-    // Optional auth (for private channels)
     const token = socket.handshake.auth?.token;
     if (token) {
       try {
@@ -38,23 +26,13 @@ const initWebSocket = (server) => {
       }
     }
 
-    // ================================
     // SUBSCRIBE TO TICKER
-    // Client: socket.emit('subscribe_ticker', 'BTCUSDT')
-    // Server: pushes price every 1 second
-    // ================================
     socket.on('subscribe_ticker', async (symbol) => {
       const room = `ticker:${symbol.toUpperCase()}`;
       socket.join(room);
-      console.log(`📊 ${socket.id} subscribed to ${room}`);
-
-      // Send current price immediately
       const cached = await redis.get(`price:${symbol.replace('USDT','')}`);
       if (cached) {
-        socket.emit('ticker', {
-          symbol: symbol.toUpperCase(),
-          ...JSON.parse(cached)
-        });
+        socket.emit('ticker', { symbol: symbol.toUpperCase(), ...JSON.parse(cached) });
       }
     });
 
@@ -62,23 +40,44 @@ const initWebSocket = (server) => {
       socket.leave(`ticker:${symbol.toUpperCase()}`);
     });
 
-    // ================================
     // SUBSCRIBE TO ORDER BOOK
-    // ================================
     socket.on('subscribe_orderbook', async (symbol) => {
       const room = `orderbook:${symbol.toUpperCase()}`;
       socket.join(room);
 
-      // Send current order book
+      // Send immediately on subscribe
       const pair = await db.query(
-        'SELECT id FROM trading_pairs WHERE symbol = $1',
+        'SELECT id, is_custom FROM trading_pairs WHERE symbol = $1',
         [symbol.toUpperCase()]
       );
-      if (pair.rows[0]) {
-        const pairId = pair.rows[0].id;
+      if (!pair.rows[0]) return;
+
+      const { id: pairId, is_custom } = pair.rows[0];
+
+      if (is_custom) {
+        // Internal orderbook
+        const bids = await db.query(`
+          SELECT CAST(price AS VARCHAR) as price,
+                 CAST(SUM(remaining_qty) AS VARCHAR) as qty
+          FROM orders WHERE pair_id = $1 AND side = 'buy'
+            AND status IN ('open','partially_filled') AND price IS NOT NULL
+          GROUP BY price ORDER BY price DESC LIMIT 15
+        `, [pairId]);
+        const asks = await db.query(`
+          SELECT CAST(price AS VARCHAR) as price,
+                 CAST(SUM(remaining_qty) AS VARCHAR) as qty
+          FROM orders WHERE pair_id = $1 AND side = 'sell'
+            AND status IN ('open','partially_filled') AND price IS NOT NULL
+          GROUP BY price ORDER BY price ASC LIMIT 15
+        `, [pairId]);
+        socket.emit('orderbook', {
+          symbol: symbol.toUpperCase(),
+          bids: bids.rows, asks: asks.rows, source: 'internal'
+        });
+      } else {
+        // Redis orderbook (Binance)
         const bids = await redis.zrevrange(`orderbook:${pairId}:bids`, 0, 19, 'WITHSCORES');
         const asks = await redis.zrange(`orderbook:${pairId}:asks`, 0, 19, 'WITHSCORES');
-
         socket.emit('orderbook', {
           symbol: symbol.toUpperCase(),
           bids: formatOrderBook(bids),
@@ -91,36 +90,26 @@ const initWebSocket = (server) => {
       socket.leave(`orderbook:${symbol.toUpperCase()}`);
     });
 
-    // ================================
-    // SUBSCRIBE TO USER ORDERS (private)
-    // ================================
     socket.on('subscribe_orders', () => {
-      if (socket.userId) {
-        socket.join(`orders:${socket.userId}`);
-      }
+      if (socket.userId) socket.join(`orders:${socket.userId}`);
     });
 
     socket.on('disconnect', () => {
       console.log(`🔌 Client disconnected: ${socket.id}`);
     });
 
-    // Ping/pong keep alive
     socket.on('ping', () => socket.emit('pong'));
   });
 
-  // Start broadcasting prices
   startPriceBroadcast();
   startBinanceWebSocket();
+  startInternalOrderBookBroadcast();
 
   console.log('✅ WebSocket server initialized');
   return io;
 };
 
-// ================================
-// BROADCAST PRICES TO ALL SUBSCRIBERS
-// Har 1 second mein sab subscribed
-// clients ko latest price bhejta hai
-// ================================
+// ── PRICE BROADCAST (every 1s) ──────────────────────
 const startPriceBroadcast = () => {
   setInterval(async () => {
     if (!io) return;
@@ -133,18 +122,14 @@ const startPriceBroadcast = () => {
         JOIN price_feeds p ON p.coin_id = bc.id
         WHERE tp.is_active = true
       `);
-
       for (const pair of pairs.rows) {
         const room = `ticker:${pair.symbol}`;
-        const roomSockets = await io.in(room).fetchSockets();
-        if (roomSockets.length > 0) {
+        const sockets = await io.in(room).fetchSockets();
+        if (sockets.length > 0) {
           io.to(room).emit('ticker', {
-            symbol: pair.symbol,
-            price: pair.price,
-            change_24h: pair.change_24h,
-            volume_24h: pair.volume_24h,
-            high_24h: pair.high_24h,
-            low_24h: pair.low_24h,
+            symbol: pair.symbol, price: pair.price,
+            change_24h: pair.change_24h, volume_24h: pair.volume_24h,
+            high_24h: pair.high_24h, low_24h: pair.low_24h,
             timestamp: Date.now()
           });
         }
@@ -152,18 +137,54 @@ const startPriceBroadcast = () => {
     } catch (err) {
       console.error('Broadcast error:', err.message);
     }
-  }, 1000); // Every 1 second
+  }, 1000);
 };
 
-// ================================
-// BINANCE WEBSOCKET - Direct stream
-// Binance se real-time stream leta hai
-// aur hamare users ko relay karta hai
-// ================================
+// ── INTERNAL ORDERBOOK BROADCAST (VDC/Custom, every 1s) ──
+const startInternalOrderBookBroadcast = () => {
+  setInterval(async () => {
+    if (!io) return;
+    try {
+      const pairs = await db.query(`
+        SELECT id, symbol FROM trading_pairs
+        WHERE is_custom = true AND is_active = true
+      `);
+      for (const pair of pairs.rows) {
+        const room = `orderbook:${pair.symbol}`;
+        const sockets = await io.in(room).fetchSockets();
+        if (sockets.length === 0) continue;
+
+        const bids = await db.query(`
+          SELECT CAST(price AS VARCHAR) as price,
+                 CAST(SUM(remaining_qty) AS VARCHAR) as qty
+          FROM orders WHERE pair_id = $1 AND side = 'buy'
+            AND status IN ('open','partially_filled') AND price IS NOT NULL
+          GROUP BY price ORDER BY price DESC LIMIT 15
+        `, [pair.id]);
+
+        const asks = await db.query(`
+          SELECT CAST(price AS VARCHAR) as price,
+                 CAST(SUM(remaining_qty) AS VARCHAR) as qty
+          FROM orders WHERE pair_id = $1 AND side = 'sell'
+            AND status IN ('open','partially_filled') AND price IS NOT NULL
+          GROUP BY price ORDER BY price ASC LIMIT 15
+        `, [pair.id]);
+
+        io.to(room).emit('orderbook', {
+          symbol: pair.symbol,
+          bids: bids.rows, asks: asks.rows,
+          source: 'internal'
+        });
+      }
+    } catch (e) {}
+  }, 1000);
+};
+
+// ── BINANCE WEBSOCKET RELAY ───────────────────────────
 const startBinanceWebSocket = () => {
   const WebSocket = require('ws');
 
-  // ── TICKER STREAM ──────────────────────
+  // Ticker stream
   const tickerStreams = [
     'btcusdt@ticker','ethusdt@ticker','bnbusdt@ticker',
     'solusdt@ticker','xrpusdt@ticker','dogeusdt@ticker','trxusdt@ticker'
@@ -192,11 +213,11 @@ const startBinanceWebSocket = () => {
         }
       } catch (e) {}
     });
-    ws.on('close', () => { setTimeout(connectTicker, 5000); });
+    ws.on('close', () => setTimeout(connectTicker, 5000));
     ws.on('error', () => {});
   };
 
-  // ── ORDERBOOK STREAM ───────────────────
+  // Orderbook stream
   const obStreams = [
     'btcusdt@depth20@100ms','ethusdt@depth20@100ms','bnbusdt@depth20@100ms',
     'solusdt@depth20@100ms','xrpusdt@depth20@100ms','dogeusdt@depth20@100ms','trxusdt@depth20@100ms'
@@ -210,8 +231,6 @@ const startBinanceWebSocket = () => {
         const parsed = JSON.parse(data);
         const ob = parsed.data;
         if (!ob || !ob.bids) return;
-
-        // Stream name: btcusdt@depth20@100ms → BTCUSDT
         const symbol = parsed.stream.split('@')[0].toUpperCase() + 'USDT';
         const payload = {
           symbol,
@@ -219,11 +238,7 @@ const startBinanceWebSocket = () => {
           asks: (ob.asks||[]).slice(0,15).map(([price,qty]) => ({price,qty})),
           source: 'binance'
         };
-
-        // Broadcast to subscribed clients
-        if (io) {
-          io.to(`orderbook:${symbol}`).emit('orderbook', payload);
-        }
+        if (io) io.to(`orderbook:${symbol}`).emit('orderbook', payload);
       } catch (e) {}
     });
     ws.on('close', () => {
@@ -235,11 +250,9 @@ const startBinanceWebSocket = () => {
 
   connectTicker();
   connectOrderBook();
-};;
+};
 
-
-
-// Helper
+// ── HELPERS ───────────────────────────────────────────
 const formatOrderBook = (arr) => {
   const result = [];
   for (let i = 0; i < arr.length; i += 2) {
@@ -248,7 +261,6 @@ const formatOrderBook = (arr) => {
   return result;
 };
 
-// Push order update to user (called from order controller)
 const pushOrderUpdate = (userId, orderData) => {
   if (io) {
     io.to(`user:${userId}`).emit('order_update', orderData);
@@ -256,11 +268,8 @@ const pushOrderUpdate = (userId, orderData) => {
   }
 };
 
-// Push trade notification
 const pushTradeNotification = (userId, tradeData) => {
-  if (io) {
-    io.to(`user:${userId}`).emit('trade_executed', tradeData);
-  }
+  if (io) io.to(`user:${userId}`).emit('trade_executed', tradeData);
 };
 
 module.exports = { initWebSocket, pushOrderUpdate, pushTradeNotification, getIO: () => io };

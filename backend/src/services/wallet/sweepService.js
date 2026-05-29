@@ -44,25 +44,28 @@ class SweepService {
     console.log('[Sweep] Cycle starting...');
 
     // Step 1: Last 48hr mein deposit aaye users + networks
+    // user_deposit_addresses use karo (yahan VDCHAIN/BSC/ETH sab hain)
     const recentDeposits = await db.query(`
       SELECT DISTINCT
         d.user_id,
         d.network_id,
-        uw.address,
+        uda.address,
         n.rpc_url,
         n.short_name,
         ss.master_address,
         ss.min_sweep_usdt,
         ss.gas_reserve_native
       FROM deposits d
-      JOIN user_wallets uw ON uw.user_id = d.user_id AND uw.network_id = d.network_id
       JOIN networks n ON n.id = d.network_id
+      JOIN user_deposit_addresses uda ON uda.user_id = d.user_id
+        AND uda.network = n.short_name
       JOIN sweep_settings ss ON ss.network_id = d.network_id
-      WHERE d.created_at > NOW() - INTERVAL '48 hours'
+      WHERE d.created_at > NOW() - INTERVAL '7 days'
         AND d.status = 'completed'
         AND ss.is_active = true
         AND n.is_active = true
         AND n.rpc_url IS NOT NULL
+        AND uda.address IS NOT NULL
       ORDER BY d.user_id
     `);
 
