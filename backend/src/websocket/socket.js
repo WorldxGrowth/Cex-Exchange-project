@@ -162,61 +162,82 @@ const startPriceBroadcast = () => {
 // ================================
 const startBinanceWebSocket = () => {
   const WebSocket = require('ws');
-  const streams = [
-    'btcusdt@ticker', 'ethusdt@ticker', 'bnbusdt@ticker',
-    'solusdt@ticker', 'xrpusdt@ticker', 'dogeusdt@ticker'
+
+  // ── TICKER STREAM ──────────────────────
+  const tickerStreams = [
+    'btcusdt@ticker','ethusdt@ticker','bnbusdt@ticker',
+    'solusdt@ticker','xrpusdt@ticker','dogeusdt@ticker','trxusdt@ticker'
   ].join('/');
 
-  const connectBinance = () => {
-    const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${streams}`);
-
-    ws.on('open', () => console.log('✅ Binance WebSocket connected'));
-
+  const connectTicker = () => {
+    const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${tickerStreams}`);
+    ws.on('open', () => console.log('✅ Binance Ticker WS connected'));
     ws.on('message', async (data) => {
       try {
         const parsed = JSON.parse(data);
         const ticker = parsed.data;
         if (!ticker || !ticker.s) return;
-
-        const symbol = ticker.s; // BTCUSDT
-        const coinSymbol = symbol.replace('USDT', '');
-
-        // Update Redis cache
+        const symbol = ticker.s;
+        const coinSymbol = symbol.replace('USDT','');
         await redis.setex(`price:${coinSymbol}`, 60, JSON.stringify({
-          price: ticker.c,
-          change_24h: ticker.P,
-          volume_24h: ticker.q,
-          high_24h: ticker.h,
-          low_24h: ticker.l
+          price: ticker.c, change_24h: ticker.P,
+          volume_24h: ticker.q, high_24h: ticker.h, low_24h: ticker.l
         }));
-
-        // Broadcast to subscribers
         if (io) {
           io.to(`ticker:${symbol}`).emit('ticker', {
-            symbol,
-            price: ticker.c,
-            change_24h: ticker.P,
-            volume_24h: ticker.q,
-            high_24h: ticker.h,
-            low_24h: ticker.l,
-            timestamp: Date.now()
+            symbol, price: ticker.c, change_24h: ticker.P,
+            volume_24h: ticker.q, high_24h: ticker.h,
+            low_24h: ticker.l, timestamp: Date.now()
           });
         }
       } catch (e) {}
     });
-
-    ws.on('close', () => {
-      console.log('⚠️ Binance WS disconnected - reconnecting in 5s...');
-      setTimeout(connectBinance, 5000);
-    });
-
-    ws.on('error', (err) => {
-      console.error('Binance WS error:', err.message);
-    });
+    ws.on('close', () => { setTimeout(connectTicker, 5000); });
+    ws.on('error', () => {});
   };
 
-  connectBinance();
-};
+  // ── ORDERBOOK STREAM ───────────────────
+  const obStreams = [
+    'btcusdt@depth20@100ms','ethusdt@depth20@100ms','bnbusdt@depth20@100ms',
+    'solusdt@depth20@100ms','xrpusdt@depth20@100ms','dogeusdt@depth20@100ms','trxusdt@depth20@100ms'
+  ].join('/');
+
+  const connectOrderBook = () => {
+    const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${obStreams}`);
+    ws.on('open', () => console.log('✅ Binance OrderBook WS connected'));
+    ws.on('message', async (data) => {
+      try {
+        const parsed = JSON.parse(data);
+        const ob = parsed.data;
+        if (!ob || !ob.bids) return;
+
+        // Stream name: btcusdt@depth20@100ms → BTCUSDT
+        const symbol = parsed.stream.split('@')[0].toUpperCase() + 'USDT';
+        const payload = {
+          symbol,
+          bids: (ob.bids||[]).slice(0,15).map(([price,qty]) => ({price,qty})),
+          asks: (ob.asks||[]).slice(0,15).map(([price,qty]) => ({price,qty})),
+          source: 'binance'
+        };
+
+        // Broadcast to subscribed clients
+        if (io) {
+          io.to(`orderbook:${symbol}`).emit('orderbook', payload);
+        }
+      } catch (e) {}
+    });
+    ws.on('close', () => {
+      console.log('⚠️ Binance OB WS disconnected - reconnecting...');
+      setTimeout(connectOrderBook, 5000);
+    });
+    ws.on('error', () => {});
+  };
+
+  connectTicker();
+  connectOrderBook();
+};;
+
+
 
 // Helper
 const formatOrderBook = (arr) => {
