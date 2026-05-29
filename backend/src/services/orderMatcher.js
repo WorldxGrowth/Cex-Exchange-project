@@ -149,7 +149,7 @@ class OrderMatcher {
         FROM orders o
         WHERE o.pair_id = $1
           AND o.side   = 'buy'
-          AND o.status IN ('open', 'partial')
+          AND o.status IN ('open', 'partially_filled')
           AND o.remaining_qty > 0
           AND (o.price IS NOT NULL OR o.order_type = 'market')
         ORDER BY
@@ -167,7 +167,7 @@ class OrderMatcher {
         FROM orders o
         WHERE o.pair_id = $1
           AND o.side   = 'sell'
-          AND o.status IN ('open', 'partial')
+          AND o.status IN ('open', 'partially_filled')
           AND o.remaining_qty > 0
           AND (o.price IS NOT NULL OR o.order_type = 'market')
         ORDER BY
@@ -305,13 +305,13 @@ class OrderMatcher {
       // ── 1. Lock orders FOR UPDATE ───────────────────────
       const [buyLock, sellLock] = await Promise.all([
         client.query(
-          `SELECT id, status, remaining_qty FROM orders
-           WHERE id = $1 AND status IN ('open','partial') FOR UPDATE`,
+          `SELECT id, status, remaining_qty, filled_qty, avg_fill_price FROM orders
+           WHERE id = $1 AND status IN ('open','partially_filled') FOR UPDATE`,
           [buyOrder.id]
         ),
         client.query(
-          `SELECT id, status, remaining_qty FROM orders
-           WHERE id = $1 AND status IN ('open','partial') FOR UPDATE`,
+          `SELECT id, status, remaining_qty, filled_qty, avg_fill_price FROM orders
+           WHERE id = $1 AND status IN ('open','partially_filled') FOR UPDATE`,
           [sellOrder.id]
         ),
       ]);
@@ -357,15 +357,15 @@ class OrderMatcher {
       ]);
 
       // ── 4. Update buy order ────────────────────────────
-      const oldBuyFilled = D(buyOrder.filled_qty || 0);
+      const oldBuyFilled = D(buyLock.rows[0].filled_qty || 0);
       const newBuyFilled = oldBuyFilled.plus(qty);
       const newBuyRemain = D(buyLock.rows[0].remaining_qty).minus(qty);
-      const oldBuyAvg    = D(buyOrder.avg_fill_price || matchPrice);
+      const oldBuyAvg    = D(buyLock.rows[0].avg_fill_price || matchPrice);
       const newBuyAvg    = oldBuyFilled.isZero()
         ? price
         : oldBuyAvg.mul(oldBuyFilled).plus(price.mul(qty)).div(newBuyFilled);
       const buyStatus    = newBuyRemain.lessThanOrEqualTo('0.000001')
-        ? 'filled' : 'partial';
+        ? 'filled' : 'partially_filled';
 
       await client.query(`
         UPDATE orders SET filled_qty=$1, remaining_qty=$2,
@@ -378,15 +378,15 @@ class OrderMatcher {
       ]);
 
       // ── 5. Update sell order ───────────────────────────
-      const oldSellFilled = D(sellOrder.filled_qty || 0);
+      const oldSellFilled = D(sellLock.rows[0].filled_qty || 0);
       const newSellFilled = oldSellFilled.plus(qty);
       const newSellRemain = D(sellLock.rows[0].remaining_qty).minus(qty);
-      const oldSellAvg    = D(sellOrder.avg_fill_price || matchPrice);
+      const oldSellAvg    = D(sellLock.rows[0].avg_fill_price || matchPrice);
       const newSellAvg    = oldSellFilled.isZero()
         ? price
         : oldSellAvg.mul(oldSellFilled).plus(price.mul(qty)).div(newSellFilled);
       const sellStatus    = newSellRemain.lessThanOrEqualTo('0.000001')
-        ? 'filled' : 'partial';
+        ? 'filled' : 'partially_filled';
 
       await client.query(`
         UPDATE orders SET filled_qty=$1, remaining_qty=$2,
