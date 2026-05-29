@@ -121,7 +121,7 @@ class DepositDetector {
           console.error(`[${key}] scan error:`, e.message)
         );
       }
-    }, 60000);
+    }, 120000);
 
     this.reloadInterval = setInterval(() => this.loadAddresses(), 5 * 60 * 1000);
 
@@ -156,7 +156,7 @@ class DepositDetector {
       if (lastBlock >= currentBlock) return;
 
       const fromBlock = lastBlock + 1;
-      const toBlock = Math.min(fromBlock + 50, currentBlock);
+      const toBlock = Math.min(fromBlock + 10, currentBlock);
 
       const coins = this.coinMap[networkId] || [];
       if (coins.length === 0) {

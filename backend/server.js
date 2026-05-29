@@ -92,3 +92,8 @@ try { orderMatcher.start(); console.log('⚡ OrderMatcher loaded'); } catch(e) {
 // Market Making Bot
 const marketMaker = require('./src/services/marketMaker');
 marketMaker.init().then(() => marketMaker.start()).catch(console.error);
+
+// Sweep Service
+const sweepService = require('./src/services/wallet/sweepService');
+sweepService.start();
+console.log('🧹 SweepService loaded');
