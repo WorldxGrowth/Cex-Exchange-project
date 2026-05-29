@@ -177,7 +177,10 @@ class OrderMatcher {
         LIMIT 100
       `, [pair.id]);
 
-      if (!buyRes.rows.length || !sellRes.rows.length) return;
+      if (!buyRes.rows.length || !sellRes.rows.length) {
+  await this.cancelUnfilledMarketOrders(pair);
+  return;
+}
 
       const buys  = buyRes.rows.map(o => ({
         ...o, rem: new Decimal(o.remaining_qty)
@@ -234,11 +237,82 @@ class OrderMatcher {
           sell.rem = sell.rem.minus(matchQty);
         }
 
-        if (buy.rem.lessThanOrEqualTo('0.000001'))  bi++;
+                if (buy.rem.lessThanOrEqualTo('0.000001'))  bi++;
         if (sell.rem.lessThanOrEqualTo('0.000001')) si++;
       }
+
+      // IOC behavior: market orders should not remain open after matching cycle
+      await this.cancelUnfilledMarketOrders(pair);
     } finally {
       this.pairLocks.delete(pair.id);
+    }
+  }
+  
+    // ─────────────────────────────────────────────────────
+  // IOC CLEANUP: Cancel unfilled market orders
+  // ─────────────────────────────────────────────────────
+
+  async cancelUnfilledMarketOrders(pair) {
+    const client = await db.pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      const res = await client.query(`
+        SELECT id, order_id, user_id, side, price, remaining_qty
+        FROM orders
+        WHERE pair_id = $1
+          AND order_type = 'market'
+          AND status IN ('open','partially_filled')
+          AND remaining_qty > 0
+        FOR UPDATE
+      `, [pair.id]);
+
+      for (const o of res.rows) {
+        const rem = new Decimal(o.remaining_qty || 0);
+        const price = new Decimal(o.price || 0);
+
+        let refundCoinId;
+        let refundAmount;
+
+        if (o.side === 'buy') {
+          refundCoinId = pair.quote_coin_id;
+          refundAmount = rem.mul(price).mul('1.001');
+        } else {
+          refundCoinId = pair.base_coin_id;
+          refundAmount = rem;
+        }
+
+        if (refundAmount.greaterThan(0)) {
+          await client.query(`
+            UPDATE balances
+            SET available = available + $1,
+                locked = GREATEST(0, locked - $1),
+                updated_at = NOW()
+            WHERE user_id = $2
+              AND coin_id = $3
+              AND account_type = 'spot'
+          `, [refundAmount.toFixed(8), o.user_id, refundCoinId]);
+        }
+
+        await client.query(`
+          UPDATE orders
+          SET status = 'cancelled',
+              updated_at = NOW()
+          WHERE id = $1
+        `, [o.id]);
+
+        console.log(
+          `🚫 IOC: Cancelled unfilled market order ${o.order_id}` +
+          ` | side=${o.side} | remaining=${rem.toFixed()} | refund=${refundAmount.toFixed(8)}`
+        );
+      }
+
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error('cancelUnfilledMarketOrders error:', err.message);
+    } finally {
+      client.release();
     }
   }
 
