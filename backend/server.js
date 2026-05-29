@@ -87,7 +87,7 @@ depositDetector.init().then(() => depositDetector.start()).catch(console.error);
 
 // Order Matching Engine
 const orderMatcher = require('./src/services/orderMatcher');
-orderMatcher.start();
+try { orderMatcher.start(); console.log('⚡ OrderMatcher loaded'); } catch(e) { console.error('OrderMatcher FAILED:', e.message); }
 
 // Market Making Bot
 const marketMaker = require('./src/services/marketMaker');
