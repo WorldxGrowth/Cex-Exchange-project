@@ -80,3 +80,19 @@ Object.assign(adminAPI, {
   getUserWithdrawals: (id) => api.get(`/admin/users/${id}/withdrawals`),
   getUserLedger: (id) => api.get(`/admin/users/${id}/ledger`),
 });
+
+// Bot Management APIs
+Object.assign(adminAPI, {
+  getBots: () => api.get('/admin/bots'),
+  getBotStats: () => api.get('/admin/bots/stats/overview'),
+  getBot: (id) => api.get(`/admin/bots/${id}`),
+  createBot: (data) => api.post('/admin/bots', data),
+  updateBot: (id, data) => api.put(`/admin/bots/${id}`, data),
+  toggleBot: (id) => api.post(`/admin/bots/${id}/toggle`),
+  cancelBotOrders: (id) => api.post(`/admin/bots/${id}/cancel-orders`),
+  resetBotDaily: (id) => api.post(`/admin/bots/${id}/reset-daily`),
+  allocateBotBalance: (id, data) => api.post(`/admin/bots/${id}/allocate`, data),
+  getBotOrders: (id, params) => api.get(`/admin/bots/${id}/orders`, { params }),
+  getBotTrades: (id) => api.get(`/admin/bots/${id}/trades`),
+  placeBotManualOrder: (id, data) => api.post(`/admin/bots/${id}/manual-order`, data),
+});

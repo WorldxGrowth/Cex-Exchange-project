@@ -13,6 +13,7 @@ import Listings from './pages/listings/Listings';
 import Scanner from './pages/scanner/Scanner';
 import Banners from './pages/banners/Banners';
 import Settings from './pages/settings/Settings';
+import Bots from './pages/bots/Bots';
 
 const isAuth = () => !!localStorage.getItem('admin_token');
 const PrivateRoute = ({ children }) =>
@@ -49,6 +50,7 @@ export default function App() {
             <Route path="scanner"      element={<Scanner />} />
             <Route path="banners"      element={<Banners />} />
             <Route path="settings"     element={<Settings />} />
+            <Route path="bots"         element={<Bots />} />
           </Route>
         </Routes>
       </BrowserRouter>

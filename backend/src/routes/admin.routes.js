@@ -72,4 +72,7 @@ router.post('/popups', addPopup);
 router.get('/settings', getSettings);
 router.put('/settings/:key', updateSetting);
 
+// Bot Management
+router.use('/bots', require('./bot.routes'));
+
 module.exports = router;

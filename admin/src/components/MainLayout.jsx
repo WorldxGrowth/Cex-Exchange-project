@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Layout, Menu, Avatar, Dropdown, Space, Typography, Drawer, Button } from 'antd';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
-  DashboardOutlined, UserOutlined, SettingOutlined,
+  DashboardOutlined, UserOutlined, SettingOutlined, RobotOutlined,
   LogoutOutlined, DollarOutlined, SafetyOutlined,
   RadarChartOutlined, PictureOutlined, ArrowDownOutlined,
   ArrowUpOutlined, RocketOutlined, MenuOutlined, CloseOutlined
@@ -26,7 +26,6 @@ export default function MainLayout() {
     return () => window.removeEventListener('resize', handleResize);
   }, []);
 
-  // Close drawer on route change (mobile)
   useEffect(() => {
     setMobileOpen(false);
   }, [location.pathname]);
@@ -41,6 +40,7 @@ export default function MainLayout() {
     { key: '/listings',    icon: <RocketOutlined />,     label: 'Token Listings' },
     { key: '/scanner',     icon: <RadarChartOutlined />, label: 'Scanner' },
     { key: '/banners',     icon: <PictureOutlined />,    label: 'Banners' },
+    { key: '/bots',        icon: <RobotOutlined />,      label: 'Market Bots' },
     { key: '/settings',    icon: <SettingOutlined />,    label: 'Settings' },
   ];
 
@@ -58,7 +58,6 @@ export default function MainLayout() {
 
   const SidebarMenu = () => (
     <div style={{ height: '100%', background: '#1e2026', display: 'flex', flexDirection: 'column' }}>
-      {/* Logo */}
       <div style={{
         height: 64, display: 'flex', alignItems: 'center',
         justifyContent: 'space-between', padding: '0 16px',
@@ -73,8 +72,6 @@ export default function MainLayout() {
             style={{ color: '#848e9c' }} />
         )}
       </div>
-
-      {/* Menu */}
       <Menu
         theme="dark"
         selectedKeys={[location.pathname]}
@@ -83,14 +80,11 @@ export default function MainLayout() {
         style={{ background: '#1e2026', borderRight: 'none',
                  marginTop: 8, flex: 1, overflow: 'auto' }}
       />
-
-      {/* Bottom logout */}
       <div style={{ padding: '16px', borderTop: '1px solid #2b2f36' }}>
         <div onClick={handleLogout} style={{
           display: 'flex', alignItems: 'center', gap: 10,
           padding: '8px 12px', borderRadius: 8, cursor: 'pointer',
-          color: '#f6465d',
-          transition: '0.2s'
+          color: '#f6465d', transition: '0.2s'
         }}>
           <LogoutOutlined />
           <Typography.Text style={{ color: '#f6465d' }}>Logout</Typography.Text>
@@ -102,7 +96,6 @@ export default function MainLayout() {
   return (
     <Layout style={{ minHeight: '100vh', background: '#0b0e11' }}>
 
-      {/* Desktop Sidebar */}
       {!isMobile && (
         <Sider
           collapsible collapsed={collapsed}
@@ -131,7 +124,6 @@ export default function MainLayout() {
         </Sider>
       )}
 
-      {/* Mobile Drawer */}
       {isMobile && (
         <Drawer
           placement="left"
@@ -146,7 +138,6 @@ export default function MainLayout() {
       )}
 
       <Layout>
-        {/* Header */}
         <Header style={{
           background: '#1e2026', padding: '0 16px',
           display: 'flex', alignItems: 'center',
@@ -156,7 +147,6 @@ export default function MainLayout() {
           position: 'sticky', top: 0, zIndex: 100
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            {/* Hamburger - mobile only */}
             {isMobile && (
               <Button
                 type="text"
@@ -171,7 +161,6 @@ export default function MainLayout() {
               {isMobile ? currentPage : 'Admin Panel'}
             </Typography.Text>
           </div>
-
           <Dropdown menu={userMenu} placement="bottomRight">
             <Space style={{ cursor: 'pointer' }}>
               <Avatar style={{ background: '#f0b90b', color: '#000', fontSize: 14 }}>A</Avatar>
@@ -182,7 +171,6 @@ export default function MainLayout() {
           </Dropdown>
         </Header>
 
-        {/* Content */}
         <Content style={{
           margin: isMobile ? '8px' : '16px',
           padding: isMobile ? '12px' : '16px',
