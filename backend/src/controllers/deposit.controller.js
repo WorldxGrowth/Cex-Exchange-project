@@ -18,30 +18,28 @@ const getDepositAddress = async (req, res) => {
     // Address generate/fetch
     const address = await hdWallet.getOrCreateDepositAddress(req.user.id, network);
 
-    // ── Alchemy mein register karo (non-blocking) ──
-    // Sirf BSC/ETH ke liye, VDCHAIN apna node hai
-    if (network !== 'VDCHAIN') {
-      setImmediate(async () => {
-        try {
-          const alchemyService = require('../services/alchemyService');
-          // Check DB mein already registered hai?
-          const existing = await db.query(
-            'SELECT id FROM user_deposit_addresses WHERE user_id=$1 AND network=$2',
-            [req.user.id, network]
+    // ── Webhook mein register karo (non-blocking) ──
+    // BSC/ETH → Alchemy
+    // VDCHAIN → VDNotify
+    setImmediate(async () => {
+      try {
+        const alchemyService = require('../services/alchemyService');
+        const existing = await db.query(
+          'SELECT id FROM user_deposit_addresses WHERE user_id=$1 AND network=$2',
+          [req.user.id, network]
+        );
+        if (existing.rows.length > 0) {
+          const ok = await alchemyService.registerNewUserAddress(
+            req.user.id, network, address
           );
-          if (existing.rows.length > 0) {
-            const ok = await alchemyService.registerNewUserAddress(
-              req.user.id, network, address
-            );
-            if (ok) {
-              console.log(`[Deposit] ✅ Alchemy registered: User ${req.user.id} ${network} ${address}`);
-            }
+          if (ok) {
+            console.log(`[Deposit] ✅ Webhook registered: User ${req.user.id} ${network} ${address}`);
           }
-        } catch (e) {
-          console.error('[Deposit] Alchemy register error (non-blocking):', e.message);
         }
-      });
-    }
+      } catch (e) {
+        console.error('[Deposit] Webhook register error (non-blocking):', e.message);
+      }
+    });
 
     const coinInfo = await db.query(
       'SELECT id, symbol, name, logo_url FROM coins WHERE symbol = $1', [coin]
