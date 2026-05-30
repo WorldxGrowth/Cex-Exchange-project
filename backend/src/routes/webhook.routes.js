@@ -8,48 +8,47 @@ const { success, error } = require('../utils/response');
 
 // ─────────────────────────────────────────────────
 // ALCHEMY WEBHOOK RECEIVER
-// URL: POST /api/v1/webhook/alchemy
-// Public - no auth (verified by HMAC signature)
+// Public - HMAC signature verified
+// Raw body server.js mein already set hai
 // ─────────────────────────────────────────────────
-router.post('/alchemy',
-  // Raw body capture for signature verification
-  express.raw({ type: 'application/json' }),
-  async (req, res) => {
-    try {
-      // Always respond 200 immediately (Alchemy retry logic)
-      res.status(200).json({ received: true });
+router.post('/alchemy', async (req, res) => {
+  try {
+    res.status(200).json({ received: true });
 
-      const rawBody  = req.body.toString('utf8');
-      const signature = req.headers['x-alchemy-signature'] || '';
-
-      if (!rawBody) {
-        console.log('[WebhookRoute] Empty body received');
-        return;
-      }
-
-      // Process async (after 200 response)
-      setImmediate(async () => {
-        try {
-          const result = await alchemyWebhook.processPayload(rawBody, signature);
-          console.log('[WebhookRoute] Result:', result);
-        } catch (e) {
-          console.error('[WebhookRoute] processPayload error:', e.message);
-        }
-      });
-
-    } catch (e) {
-      console.error('[WebhookRoute] Error:', e.message);
-      if (!res.headersSent) res.status(200).json({ received: true });
+    // Raw body - Buffer ya String ho sakta hai
+    let rawBody;
+    if (Buffer.isBuffer(req.body)) {
+      rawBody = req.body.toString('utf8');
+    } else if (typeof req.body === 'string') {
+      rawBody = req.body;
+    } else {
+      rawBody = JSON.stringify(req.body);
     }
+
+    const signature = req.headers['x-alchemy-signature'] || '';
+
+    if (!rawBody) {
+      console.log('[WebhookRoute] Empty body');
+      return;
+    }
+
+    setImmediate(async () => {
+      try {
+        const result = await alchemyWebhook.processPayload(rawBody, signature);
+        console.log('[WebhookRoute] Result:', result);
+      } catch (e) {
+        console.error('[WebhookRoute] Error:', e.message);
+      }
+    });
+
+  } catch (e) {
+    console.error('[WebhookRoute] Error:', e.message);
+    if (!res.headersSent) res.status(200).json({ received: true });
   }
-);
+});
 
-// ─────────────────────────────────────────────────
-// ADMIN APIs — Alchemy Address Management
-// All require admin auth
-// ─────────────────────────────────────────────────
+// ── ADMIN APIs ────────────────────────────────────
 
-// GET all addresses from Alchemy webhook (live)
 router.get('/alchemy/addresses/:network', adminAuth, async (req, res) => {
   try {
     const { network } = req.params;
@@ -60,7 +59,6 @@ router.get('/alchemy/addresses/:network', adminAuth, async (req, res) => {
   }
 });
 
-// GET our DB addresses for a network
 router.get('/alchemy/db-addresses/:network', adminAuth, async (req, res) => {
   try {
     const { network } = req.params;
@@ -78,12 +76,10 @@ router.get('/alchemy/db-addresses/:network', adminAuth, async (req, res) => {
   }
 });
 
-// POST manually add address to Alchemy
 router.post('/alchemy/add-address', adminAuth, async (req, res) => {
   try {
     const { address, network } = req.body;
     if (!address || !network) return error(res, 'address and network required', 400);
-
     const ok = await alchemyService.addAddresses([address], network.toUpperCase());
     return success(res, { added: ok, address, network });
   } catch (e) {
@@ -91,12 +87,10 @@ router.post('/alchemy/add-address', adminAuth, async (req, res) => {
   }
 });
 
-// POST manually remove address from Alchemy
 router.post('/alchemy/remove-address', adminAuth, async (req, res) => {
   try {
     const { address, network } = req.body;
     if (!address || !network) return error(res, 'address and network required', 400);
-
     const ok = await alchemyService.removeAddresses([address], network.toUpperCase());
     return success(res, { removed: ok, address, network });
   } catch (e) {
@@ -104,7 +98,6 @@ router.post('/alchemy/remove-address', adminAuth, async (req, res) => {
   }
 });
 
-// POST sync all DB addresses to Alchemy
 router.post('/alchemy/sync', adminAuth, async (req, res) => {
   try {
     res.json({ status: '1', message: 'Sync started in background' });
@@ -114,7 +107,6 @@ router.post('/alchemy/sync', adminAuth, async (req, res) => {
   }
 });
 
-// GET webhook config status
 router.get('/alchemy/status', adminAuth, async (req, res) => {
   try {
     const networks = ['BSC', 'ETH', 'POLYGON'];

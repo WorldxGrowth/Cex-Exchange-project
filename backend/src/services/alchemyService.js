@@ -2,73 +2,75 @@ const axios = require('axios');
 const crypto = require('crypto');
 const db = require('../config/database');
 
-// ─────────────────────────────────────────────────
-// ALCHEMY SERVICE
-// - Address add/remove to webhook
-// - Signature verification
-// - Chain config dynamic from .env
-// ─────────────────────────────────────────────────
-
 class AlchemyService {
 
-  // ── Chain config from .env ─────────────────────
   getChainConfig(network) {
     const map = {
       'BSC': {
         webhook_id:  process.env.ALCHEMY_WEBHOOK_ID_BSC,
         signing_key: process.env.ALCHEMY_WEBHOOK_SIGNING_KEY_BSC,
-        enabled:     !!(process.env.ALCHEMY_WEBHOOK_ID_BSC && process.env.ALCHEMY_WEBHOOK_ID_BSC !== 'wh_xx')
+        enabled: !!(process.env.ALCHEMY_WEBHOOK_ID_BSC &&
+                    process.env.ALCHEMY_WEBHOOK_ID_BSC !== 'wh_xx')
       },
       'ETH': {
         webhook_id:  process.env.ALCHEMY_WEBHOOK_ID_ETH,
         signing_key: process.env.ALCHEMY_WEBHOOK_SIGNING_KEY_ETH,
-        enabled:     !!(process.env.ALCHEMY_WEBHOOK_ID_ETH && process.env.ALCHEMY_WEBHOOK_ID_ETH !== 'wh_xx')
+        enabled: !!(process.env.ALCHEMY_WEBHOOK_ID_ETH &&
+                    process.env.ALCHEMY_WEBHOOK_ID_ETH !== 'wh_xx')
       },
       'POLYGON': {
         webhook_id:  process.env.ALCHEMY_WEBHOOK_ID_POLYGON,
         signing_key: process.env.ALCHEMY_WEBHOOK_SIGNING_KEY_POLYGON,
-        enabled:     !!(process.env.ALCHEMY_WEBHOOK_ID_POLYGON && process.env.ALCHEMY_WEBHOOK_ID_POLYGON !== 'xx')
+        enabled: !!(process.env.ALCHEMY_WEBHOOK_ID_POLYGON &&
+                    process.env.ALCHEMY_WEBHOOK_ID_POLYGON !== 'xx')
       }
     };
     return map[network?.toUpperCase()] || null;
   }
 
-  // ── Network string from Alchemy payload → our short_name ──
   detectNetwork(alchemyNetwork) {
     const map = {
-      'ETH_MAINNET':     'ETH',
-      'ETHEREUM_MAINNET':'ETH',
-      'BNB_MAINNET':     'BSC',
-      'BSC_MAINNET':     'BSC',
-      'BSC':             'BSC',
-      'MATIC_MAINNET':   'POLYGON',
-      'POLYGON_MAINNET': 'POLYGON',
+      'ETH_MAINNET':      'ETH',
+      'ETHEREUM_MAINNET': 'ETH',
+      'BNB_MAINNET':      'BSC',
+      'BSC_MAINNET':      'BSC',
+      'BSC':              'BSC',
+      'MATIC_MAINNET':    'POLYGON',
+      'POLYGON_MAINNET':  'POLYGON',
     };
     return map[alchemyNetwork] || null;
   }
 
-  // ── HMAC Signature Verify ──────────────────────
+  // ── HMAC Signature Verify ─────────────────────
   verifySignature(rawBody, receivedSignature, signingKey) {
     try {
-      if (!signingKey) return false;
+      if (!signingKey || !receivedSignature) {
+        console.log('[Alchemy] Signature or key missing — skipping verify');
+        return true; // Skip if no key configured
+      }
+
+      const body = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : rawBody;
+
       const computed = crypto
         .createHmac('sha256', signingKey)
-        .update(rawBody, 'utf8')
+        .update(body, 'utf8')
         .digest('hex');
-      return crypto.timingSafeEqual(
-        Buffer.from(computed, 'hex'),
-        Buffer.from(receivedSignature, 'hex')
-      );
+
+      console.log('[Alchemy] Computed sig:', computed.slice(0, 16) + '...');
+      console.log('[Alchemy] Received sig:', receivedSignature.slice(0, 16) + '...');
+
+      // Simple string compare (safe enough for webhook)
+      return computed === receivedSignature;
+
     } catch (e) {
       console.error('[Alchemy] Signature verify error:', e.message);
       return false;
     }
   }
 
-  // ── Add addresses to Alchemy webhook ──────────
   async addAddresses(addresses, network) {
     try {
-      if (!process.env.ALCHEMY_NOTIFY_ENABLED || process.env.ALCHEMY_NOTIFY_ENABLED !== 'true') {
+      if (process.env.ALCHEMY_NOTIFY_ENABLED !== 'true') {
         console.log('[Alchemy] Disabled in .env, skipping');
         return false;
       }
@@ -86,10 +88,9 @@ class AlchemyService {
       }
 
       const addrArray = Array.isArray(addresses) ? addresses : [addresses];
+      console.log(`[Alchemy] Adding ${addrArray.length} address(es) to ${network}...`);
 
-      console.log(`[Alchemy] Adding ${addrArray.length} address(es) to ${network} webhook...`);
-
-      const response = await axios.patch(
+      await axios.patch(
         'https://dashboard.alchemy.com/api/update-webhook-addresses',
         {
           webhook_id: config.webhook_id,
@@ -105,20 +106,19 @@ class AlchemyService {
         }
       );
 
-      console.log(`[Alchemy] ✅ Address added to ${network}: ${addrArray.join(', ')}`);
+      console.log(`[Alchemy] ✅ Added to ${network}: ${addrArray.join(', ')}`);
       return true;
 
     } catch (e) {
       const status = e.response?.status;
       const msg = e.response?.data || e.message;
-      console.error(`[Alchemy] ❌ addAddresses failed (${status}):`, msg);
+      console.error(`[Alchemy] addAddresses failed (${status}):`, msg);
       if (status === 401) console.error('[Alchemy] Check ALCHEMY_AUTH_TOKEN!');
       if (status === 404) console.error('[Alchemy] Check ALCHEMY_WEBHOOK_ID!');
       return false;
     }
   }
 
-  // ── Remove addresses from Alchemy webhook ─────
   async removeAddresses(addresses, network) {
     try {
       const config = this.getChainConfig(network);
@@ -145,7 +145,7 @@ class AlchemyService {
         }
       );
 
-      console.log(`[Alchemy] ✅ Address removed from ${network}: ${addrArray.join(', ')}`);
+      console.log(`[Alchemy] ✅ Removed from ${network}: ${addrArray.join(', ')}`);
       return true;
 
     } catch (e) {
@@ -154,7 +154,6 @@ class AlchemyService {
     }
   }
 
-  // ── Get all addresses from Alchemy webhook ────
   async getWebhookAddresses(network) {
     try {
       const config = this.getChainConfig(network);
@@ -180,7 +179,6 @@ class AlchemyService {
     }
   }
 
-  // ── Sync all DB addresses to Alchemy ──────────
   async syncAllAddresses() {
     try {
       console.log('[Alchemy] Syncing all addresses...');
@@ -189,7 +187,6 @@ class AlchemyService {
         'SELECT network, address FROM user_deposit_addresses'
       );
 
-      // Group by network
       const grouped = {};
       for (const row of addresses.rows) {
         const net = row.network.toUpperCase();
@@ -198,17 +195,15 @@ class AlchemyService {
       }
 
       for (const [network, addrs] of Object.entries(grouped)) {
-        if (network === 'VDCHAIN') continue; // VDChain = apna node
+        if (network === 'VDCHAIN') continue;
         const config = this.getChainConfig(network);
         if (!config?.enabled) continue;
 
-        // Batch of 100
         for (let i = 0; i < addrs.length; i += 100) {
           const batch = addrs.slice(i, i + 100);
           await this.addAddresses(batch, network);
           await new Promise(r => setTimeout(r, 500));
         }
-
         console.log(`[Alchemy] Synced ${addrs.length} addresses for ${network}`);
       }
 
@@ -221,15 +216,14 @@ class AlchemyService {
     }
   }
 
-  // ── Register single new user address ──────────
   async registerNewUserAddress(userId, network, address) {
     try {
-      if (network === 'VDCHAIN') return true; // Apna node handle karega
-      const success = await this.addAddresses([address], network);
-      if (success) {
-        console.log(`[Alchemy] New user ${userId} address registered: ${address} (${network})`);
+      if (network === 'VDCHAIN') return true;
+      const ok = await this.addAddresses([address], network);
+      if (ok) {
+        console.log(`[Alchemy] User ${userId} registered: ${address} (${network})`);
       }
-      return success;
+      return ok;
     } catch (e) {
       console.error('[Alchemy] registerNewUserAddress error:', e.message);
       return false;

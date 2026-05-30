@@ -11,11 +11,37 @@ const NETWORK_INFO = {
 const getDepositAddress = async (req, res) => {
   try {
     const network = (req.query.network || 'BSC').toUpperCase();
-    const coin = (req.query.coin || 'USDT').toUpperCase();
+    const coin    = (req.query.coin    || 'USDT').toUpperCase();
 
     if (!NETWORK_INFO[network]) return error(res, 'Invalid network');
 
+    // Address generate/fetch
     const address = await hdWallet.getOrCreateDepositAddress(req.user.id, network);
+
+    // ── Alchemy mein register karo (non-blocking) ──
+    // Sirf BSC/ETH ke liye, VDCHAIN apna node hai
+    if (network !== 'VDCHAIN') {
+      setImmediate(async () => {
+        try {
+          const alchemyService = require('../services/alchemyService');
+          // Check DB mein already registered hai?
+          const existing = await db.query(
+            'SELECT id FROM user_deposit_addresses WHERE user_id=$1 AND network=$2',
+            [req.user.id, network]
+          );
+          if (existing.rows.length > 0) {
+            const ok = await alchemyService.registerNewUserAddress(
+              req.user.id, network, address
+            );
+            if (ok) {
+              console.log(`[Deposit] ✅ Alchemy registered: User ${req.user.id} ${network} ${address}`);
+            }
+          }
+        } catch (e) {
+          console.error('[Deposit] Alchemy register error (non-blocking):', e.message);
+        }
+      });
+    }
 
     const coinInfo = await db.query(
       'SELECT id, symbol, name, logo_url FROM coins WHERE symbol = $1', [coin]
@@ -28,8 +54,9 @@ const getDepositAddress = async (req, res) => {
       coin: coinInfo.rows[0] || { symbol: coin },
       min_deposit: '1',
       confirmations_required: network === 'ETH' ? 12 : 3,
-      warning: 'Only send ' + coin + ' on ' + network + ' network!'
+      warning: `Only send ${coin} on ${network} network!`
     });
+
   } catch (err) {
     console.error('getDepositAddress:', err.message);
     return error(res, 'Failed to generate address', 500);
@@ -38,13 +65,16 @@ const getDepositAddress = async (req, res) => {
 
 const getDepositHistory = async (req, res) => {
   try {
-    const limit = req.query.limit || 20;
+    const limit  = req.query.limit  || 20;
     const offset = req.query.offset || 0;
 
     const deposits = await db.query(`
-      SELECT d.*, c.symbol, c.name, c.logo_url
+      SELECT d.*, c.symbol, c.name, c.logo_url,
+             n.name as network_name, n.short_name as network,
+             n.explorer_url
       FROM deposits d
       LEFT JOIN coins c ON c.id = d.coin_id
+      LEFT JOIN networks n ON n.id = d.network_id
       WHERE d.user_id = $1
       ORDER BY d.created_at DESC
       LIMIT $2 OFFSET $3
