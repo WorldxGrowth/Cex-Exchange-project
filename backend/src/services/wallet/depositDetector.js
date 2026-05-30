@@ -6,7 +6,6 @@ const ERC20_ABI = [
   'function decimals() view returns (uint8)'
 ];
 
-// Email helper - always safe
 const sendEmailSafe = async (fn, ...args) => {
   try {
     const emailService = require('../email/emailService');
@@ -247,21 +246,24 @@ class DepositDetector {
     }
   }
 
+  // ── creditDeposit - SAME as alchemyWebhook ────
   async creditDeposit({ networkId, shortName, txHash, fromAddress,
-                         toAddress, amount, coinId, coinSymbol, userId }) {
+                        toAddress, amount, coinId, coinSymbol, userId }) {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
 
-      // Duplicate check
+      // Duplicate check - txhash UNIQUE index
       const existing = await client.query(
         'SELECT id FROM deposits WHERE txhash = $1', [txHash]
       );
       if (existing.rows.length > 0) {
         await client.query('ROLLBACK');
+        console.log(`[Scanner] Duplicate tx skipped: ${txHash}`);
         return;
       }
 
+      // Balance row lock (double-spend safe)
       const balRow = await client.query(`
         SELECT available FROM balances
         WHERE user_id = $1 AND coin_id = $2 AND account_type = 'spot'
@@ -269,13 +271,16 @@ class DepositDetector {
       `, [userId, coinId]);
       const balBefore = parseFloat(balRow.rows[0]?.available || 0);
 
+      // Insert deposit - full columns
       await client.query(`
         INSERT INTO deposits
           (user_id, coin_id, network_id, txhash, from_address,
-           to_address, amount, status, credited_at)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,'completed',NOW())
+           to_address, amount, status, credited, credited_at,
+           created_at, updated_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,'completed',true,NOW(),NOW(),NOW())
       `, [userId, coinId, networkId, txHash, fromAddress, toAddress, amount]);
 
+      // Update balance
       await client.query(`
         INSERT INTO balances (user_id, coin_id, account_type, available, locked)
         VALUES ($1,$2,'spot',$3,0)
@@ -283,6 +288,7 @@ class DepositDetector {
         DO UPDATE SET available = balances.available + $3, updated_at = NOW()
       `, [userId, coinId, amount]);
 
+      // Ledger entry
       await client.query(`
         INSERT INTO ledger
           (user_id, coin_id, type, amount, balance_before, balance_after,
@@ -293,7 +299,7 @@ class DepositDetector {
 
       await client.query('COMMIT');
 
-      console.log(`✅ DEPOSIT: User ${userId} | +${amount} ${coinSymbol} | ${shortName} | TX: ${txHash.slice(0,10)}...`);
+      console.log(`✅ DEPOSIT: User ${userId} | +${amount} ${coinSymbol} | ${shortName} | TX: ${txHash.slice(0,12)}...`);
 
       // Deposit email - safe async
       db.query('SELECT email FROM users WHERE id = $1', [userId])
@@ -304,8 +310,19 @@ class DepositDetector {
               network: shortName, txhash: txHash
             });
           }
-        })
-        .catch(() => {});
+        }).catch(() => {});
+
+      // WebSocket notify
+      try {
+        const { getIO } = require('../../websocket/socket');
+        const io = getIO();
+        if (io) {
+          io.to(`user:${userId}`).emit('deposit_credited', {
+            amount, symbol: coinSymbol,
+            network: shortName, txhash: txHash
+          });
+        }
+      } catch (e) {}
 
     } catch (err) {
       await client.query('ROLLBACK');

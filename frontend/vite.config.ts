@@ -1,16 +1,16 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
-
 export default defineConfig({
   plugins: [react()],
   server: {
     port: 4007,
     host: true,
+    allowedHosts: ['exchange.vdscan.io', 'exchange.vdscan.com', 'all'],
     hmr: {
       overlay: false,
       timeout: 300000,
-      clientPort: 4007,
-      protocol: 'ws'
+      clientPort: 443,
+      protocol: 'wss'
     },
     watch: {
       usePolling: false,

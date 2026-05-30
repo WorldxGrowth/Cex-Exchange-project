@@ -4,13 +4,35 @@ const { generateTokens } = require('../utils/jwt');
 const { generateUID, generateReferralCode } = require('../utils/helpers');
 const { success, error } = require('../utils/response');
 
-// Email helper - try/catch se safe
+// Email helper
 const sendEmail = async (fn, ...args) => {
   try {
     const emailService = require('../services/email/emailService');
     await emailService[fn](...args);
   } catch (e) {
     console.error(`Email ${fn} failed:`, e.message);
+  }
+};
+
+// Alchemy address register helper (non-blocking)
+const registerAddressToAlchemy = async (userId) => {
+  try {
+    if (process.env.ALCHEMY_NOTIFY_ENABLED !== 'true') return;
+    const alchemyService = require('../services/alchemyService');
+
+    // Get all deposit addresses for this user
+    const addresses = await db.query(
+      'SELECT network, address FROM user_deposit_addresses WHERE user_id = $1',
+      [userId]
+    );
+
+    for (const row of addresses.rows) {
+      if (row.network === 'VDCHAIN') continue; // VDChain = apna node
+      await alchemyService.registerNewUserAddress(userId, row.network, row.address);
+      await new Promise(r => setTimeout(r, 200)); // Small delay
+    }
+  } catch (e) {
+    console.error('[Auth] Alchemy register error (non-blocking):', e.message);
   }
 };
 
@@ -72,6 +94,10 @@ const register = async (req, res) => {
 
     // Welcome email - async, safe
     sendEmail('sendWelcomeEmail', user);
+
+    // Register deposit addresses to Alchemy - async, non-blocking
+    // Small delay to allow deposit addresses to be created first
+    setTimeout(() => registerAddressToAlchemy(user.id), 3000);
 
     return success(res, {
       user: {
@@ -234,6 +260,10 @@ const googleCallback = (req, res, next) => {
   }, (err, data) => {
     if (err || !data)
       return res.redirect(`${process.env.FRONTEND_URL}/login?error=google_failed`);
+
+    // Register Alchemy addresses for Google OAuth user too
+    setTimeout(() => registerAddressToAlchemy(data.user.id), 3000);
+
     res.redirect(`${process.env.FRONTEND_URL}/auth/google/success?token=${data.token}&uid=${data.user.uid}&email=${data.user.email}`);
   })(req, res, next);
 };
