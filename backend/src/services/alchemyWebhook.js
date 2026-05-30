@@ -15,33 +15,28 @@ class AlchemyWebhookProcessor {
 
   async processPayload(rawBody, signature) {
     try {
-      const payload = JSON.parse(rawBody);
+      let bodyStr = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : rawBody;
+      const payload = JSON.parse(bodyStr);
 
-      if (payload.type !== 'ADDRESS_ACTIVITY') {
-        console.log(`[AlchemyWH] Ignored type: ${payload.type}`);
-        return { ok: true, ignored: true };
-      }
+      if (payload.type !== 'ADDRESS_ACTIVITY') return { ok: true, ignored: true };
 
       const network = payload.event?.network;
       const ourNetwork = alchemyService.detectNetwork(network);
-
       if (!ourNetwork) {
         console.log(`[AlchemyWH] Unknown network: ${network}`);
         return { ok: true, ignored: true };
       }
 
-      // ── Signature verify - DISABLED temporarily ──
-      // TODO: Fix signature verification after deposit flow confirmed
+      // ── Signature verify ──────────────────────────
+      // TODO: Re-enable after production testing
       // const config = alchemyService.getChainConfig(ourNetwork);
       // if (config?.signing_key) {
-      //   const valid = alchemyService.verifySignature(rawBody, signature, config.signing_key);
+      //   const valid = alchemyService.verifySignature(bodyStr, signature, config.signing_key);
       //   if (!valid) {
-      //     console.error(`[AlchemyWH] Invalid signature for ${ourNetwork}`);
+      //     console.error(`[AlchemyWH] ❌ Invalid signature for ${ourNetwork}`);
       //     return { ok: false, error: 'Invalid signature' };
       //   }
       // }
-
-      console.log(`[AlchemyWH] Processing ${ourNetwork} webhook: ${payload.id}`);
 
       const activities = payload.event?.activity || [];
       let processed = 0;
@@ -55,7 +50,7 @@ class AlchemyWebhookProcessor {
         }
       }
 
-      console.log(`[AlchemyWH] ✅ Processed ${processed}/${activities.length} activities`);
+      console.log(`[AlchemyWH] ✅ Processed ${processed}/${activities.length} | ${ourNetwork} | ${payload.id}`);
       return { ok: true, processed };
 
     } catch (e) {
@@ -65,9 +60,10 @@ class AlchemyWebhookProcessor {
   }
 
   async processActivity(activity, network) {
-    const toAddress  = activity.toAddress?.toLowerCase();
-    const txHash     = activity.hash;
-    const category   = activity.category;
+    const toAddress = activity.toAddress?.toLowerCase();
+    const txHash    = activity.hash;
+    const category  = activity.category;
+    const asset     = activity.asset;
 
     if (!toAddress || !txHash) return;
 
@@ -76,18 +72,14 @@ class AlchemyWebhookProcessor {
        WHERE LOWER(address) = $1 AND network = $2`,
       [toAddress, network]
     );
-
-    if (!userRow.rows[0]) {
-      console.log(`[AlchemyWH] Address not ours: ${toAddress}`);
-      return;
-    }
+    if (!userRow.rows[0]) return; // Not our address
 
     const userId = userRow.rows[0].user_id;
     let coinId, amount;
 
-    if (category === 'external' || activity.asset === 'BNB' || activity.asset === 'ETH') {
+    if (category === 'external' || asset === 'BNB' || asset === 'ETH') {
       const nativeCoin = await db.query(`
-        SELECT c.id, c.decimals FROM coins c
+        SELECT c.id FROM coins c
         JOIN networks n ON n.id = c.network_id
         WHERE n.short_name = $1 AND c.contract_address IS NULL AND c.is_active = true
         LIMIT 1
@@ -99,7 +91,7 @@ class AlchemyWebhookProcessor {
     } else if (category === 'token' && activity.rawContract?.address) {
       const contractAddr = activity.rawContract.address.toLowerCase();
       const tokenCoin = await db.query(`
-        SELECT c.id, c.decimals FROM coins c
+        SELECT c.id FROM coins c
         JOIN networks n ON n.id = c.network_id
         WHERE n.short_name = $1
           AND LOWER(c.contract_address) = $2
@@ -107,7 +99,7 @@ class AlchemyWebhookProcessor {
         LIMIT 1
       `, [network, contractAddr]);
       if (!tokenCoin.rows[0]) {
-        console.log(`[AlchemyWH] Unknown token: ${contractAddr}`);
+        console.log(`[AlchemyWH] Unknown token: ${contractAddr} on ${network}`);
         return;
       }
       coinId = tokenCoin.rows[0].id;
@@ -122,10 +114,10 @@ class AlchemyWebhookProcessor {
       'SELECT id FROM networks WHERE short_name = $1', [network]
     );
     if (!netRow.rows[0]) return;
-    const networkId = netRow.rows[0].id;
 
     await this.creditDeposit({
-      userId, coinId, networkId, network, txHash,
+      userId, coinId, networkId: netRow.rows[0].id,
+      network, txHash,
       fromAddress: activity.fromAddress,
       toAddress: activity.toAddress,
       amount
@@ -138,12 +130,13 @@ class AlchemyWebhookProcessor {
     try {
       await client.query('BEGIN');
 
+      // Duplicate check
       const existing = await client.query(
         'SELECT id FROM deposits WHERE txhash = $1', [txHash]
       );
       if (existing.rows.length > 0) {
         await client.query('ROLLBACK');
-        console.log(`[AlchemyWH] Duplicate tx skipped: ${txHash}`);
+        console.log(`[AlchemyWH] Duplicate skipped: ${txHash.slice(0,12)}...`);
         return;
       }
 
@@ -154,16 +147,13 @@ class AlchemyWebhookProcessor {
       `, [userId, coinId]);
       const balBefore = parseFloat(balRow.rows[0]?.available || 0);
 
-      const coinRow = await client.query(
-        'SELECT symbol FROM coins WHERE id = $1', [coinId]
-      );
+      const coinRow = await client.query('SELECT symbol FROM coins WHERE id = $1', [coinId]);
       const coinSymbol = coinRow.rows[0]?.symbol || '?';
 
       await client.query(`
         INSERT INTO deposits
           (user_id, coin_id, network_id, txhash, from_address,
-           to_address, amount, status, credited, credited_at,
-           created_at, updated_at)
+           to_address, amount, status, credited, credited_at, created_at, updated_at)
         VALUES ($1,$2,$3,$4,$5,$6,$7,'completed',true,NOW(),NOW(),NOW())
       `, [userId, coinId, networkId, txHash, fromAddress, toAddress, amount]);
 
@@ -175,8 +165,7 @@ class AlchemyWebhookProcessor {
       `, [userId, coinId, amount]);
 
       await client.query(`
-        INSERT INTO ledger
-          (user_id, coin_id, type, amount, balance_before, balance_after,
+        INSERT INTO ledger (user_id, coin_id, type, amount, balance_before, balance_after,
            reference_id, description)
         VALUES ($1,$2,'deposit',$3,$4,$5,$6,$7)
       `, [userId, coinId, amount, balBefore, balBefore + amount,
@@ -184,8 +173,9 @@ class AlchemyWebhookProcessor {
 
       await client.query('COMMIT');
 
-      console.log(`[AlchemyWH] ✅ DEPOSIT: User ${userId} +${amount} ${coinSymbol} | ${network} | TX: ${txHash.slice(0,12)}...`);
+      console.log(`[AlchemyWH] ✅ DEPOSIT: User ${userId} +${amount} ${coinSymbol} | ${network} | ${txHash.slice(0,12)}...`);
 
+      // Email
       db.query('SELECT email FROM users WHERE id = $1', [userId])
         .then(u => {
           if (u.rows[0]) {
@@ -195,19 +185,18 @@ class AlchemyWebhookProcessor {
           }
         }).catch(() => {});
 
+      // WebSocket
       try {
         const { getIO } = require('../websocket/socket');
         const io = getIO();
-        if (io) {
-          io.to(`user:${userId}`).emit('deposit_credited', {
-            amount, symbol: coinSymbol, network, txhash: txHash
-          });
-        }
+        if (io) io.to(`user:${userId}`).emit('deposit_credited', {
+          amount, symbol: coinSymbol, network, txhash: txHash
+        });
       } catch (e) {}
 
     } catch (err) {
       await client.query('ROLLBACK');
-      console.error('[AlchemyWH] creditDeposit error:', err.message, 'TX:', txHash);
+      console.error('[AlchemyWH] ❌ creditDeposit error:', err.message, '| TX:', txHash);
     } finally {
       client.release();
     }
