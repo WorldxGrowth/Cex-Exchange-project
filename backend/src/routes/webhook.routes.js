@@ -7,15 +7,13 @@ const db = require('../config/database');
 const { success, error } = require('../utils/response');
 
 // ─────────────────────────────────────────────────
-// ALCHEMY WEBHOOK RECEIVER
-// Public - HMAC signature verified
-// Raw body server.js mein already set hai
+// ALCHEMY WEBHOOK RECEIVER (BSC/ETH/POLYGON)
+// POST /api/v1/webhook/alchemy
 // ─────────────────────────────────────────────────
 router.post('/alchemy', async (req, res) => {
   try {
     res.status(200).json({ received: true });
 
-    // Raw body - Buffer ya String ho sakta hai
     let rawBody;
     if (Buffer.isBuffer(req.body)) {
       rawBody = req.body.toString('utf8');
@@ -25,29 +23,65 @@ router.post('/alchemy', async (req, res) => {
       rawBody = JSON.stringify(req.body);
     }
 
+    // Alchemy signature
     const signature = req.headers['x-alchemy-signature'] || '';
 
-    if (!rawBody) {
-      console.log('[WebhookRoute] Empty body');
-      return;
-    }
+    if (!rawBody) return;
 
     setImmediate(async () => {
       try {
         const result = await alchemyWebhook.processPayload(rawBody, signature);
-        console.log('[WebhookRoute] Result:', result);
+        console.log('[WebhookRoute/Alchemy] Result:', result);
       } catch (e) {
-        console.error('[WebhookRoute] Error:', e.message);
+        console.error('[WebhookRoute/Alchemy] Error:', e.message);
       }
     });
 
   } catch (e) {
-    console.error('[WebhookRoute] Error:', e.message);
+    console.error('[WebhookRoute/Alchemy] Error:', e.message);
     if (!res.headersSent) res.status(200).json({ received: true });
   }
 });
 
-// ── ADMIN APIs ────────────────────────────────────
+// ─────────────────────────────────────────────────
+// VDNOTIFY WEBHOOK RECEIVER (VDCHAIN/VDC)
+// POST /api/v1/webhook/vdchain
+// Same processor - VDNotify uses same Alchemy format
+// ─────────────────────────────────────────────────
+router.post('/vdchain', async (req, res) => {
+  try {
+    res.status(200).json({ received: true });
+
+    let rawBody;
+    if (Buffer.isBuffer(req.body)) {
+      rawBody = req.body.toString('utf8');
+    } else if (typeof req.body === 'string') {
+      rawBody = req.body;
+    } else {
+      rawBody = JSON.stringify(req.body);
+    }
+
+    // VDNotify signature header
+    const signature = req.headers['x-vdnotify-signature'] || '';
+
+    if (!rawBody) return;
+
+    setImmediate(async () => {
+      try {
+        const result = await alchemyWebhook.processPayload(rawBody, signature);
+        console.log('[WebhookRoute/VDNotify] Result:', result);
+      } catch (e) {
+        console.error('[WebhookRoute/VDNotify] Error:', e.message);
+      }
+    });
+
+  } catch (e) {
+    console.error('[WebhookRoute/VDNotify] Error:', e.message);
+    if (!res.headersSent) res.status(200).json({ received: true });
+  }
+});
+
+// ── ADMIN APIs ─────────────────────────────────────
 
 router.get('/alchemy/addresses/:network', adminAuth, async (req, res) => {
   try {
@@ -109,14 +143,15 @@ router.post('/alchemy/sync', adminAuth, async (req, res) => {
 
 router.get('/alchemy/status', adminAuth, async (req, res) => {
   try {
-    const networks = ['BSC', 'ETH', 'POLYGON'];
+    const networks = ['BSC', 'ETH', 'POLYGON', 'VDCHAIN'];
     const status = {};
     for (const net of networks) {
       const config = alchemyService.getChainConfig(net);
       status[net] = {
-        enabled: config?.enabled || false,
-        webhook_id: config?.webhook_id || null,
-        has_signing_key: !!config?.signing_key
+        enabled:        config?.enabled || false,
+        webhook_id:     config?.webhook_id || null,
+        has_signing_key: !!config?.signing_key,
+        provider:       config?.provider || null
       };
     }
     return success(res, {

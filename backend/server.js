@@ -32,6 +32,7 @@ require('./src/config/passport');
 // ── IMPORTANT: Webhook raw body FIRST (before express.json)
 // Alchemy signature verification ke liye raw body chahiye
 app.use('/api/v1/webhook/alchemy', express.raw({ type: 'application/json' }));
+app.use('/api/v1/webhook/vdchain', express.raw({ type: 'application/json' }));
 
 // ── JSON middleware (all other routes)
 app.use(express.json());

@@ -4,30 +4,45 @@ const db = require('../config/database');
 
 class AlchemyService {
 
+  // ── Chain config from .env ─────────────────────
+  // Alchemy: BSC, ETH, POLYGON
+  // VDNotify: VDCHAIN (apna platform)
   getChainConfig(network) {
     const map = {
       'BSC': {
         webhook_id:  process.env.ALCHEMY_WEBHOOK_ID_BSC,
         signing_key: process.env.ALCHEMY_WEBHOOK_SIGNING_KEY_BSC,
         enabled: !!(process.env.ALCHEMY_WEBHOOK_ID_BSC &&
-                    process.env.ALCHEMY_WEBHOOK_ID_BSC !== 'wh_xx')
+                    process.env.ALCHEMY_WEBHOOK_ID_BSC !== 'wh_xx'),
+        provider: 'alchemy'
       },
       'ETH': {
         webhook_id:  process.env.ALCHEMY_WEBHOOK_ID_ETH,
         signing_key: process.env.ALCHEMY_WEBHOOK_SIGNING_KEY_ETH,
         enabled: !!(process.env.ALCHEMY_WEBHOOK_ID_ETH &&
-                    process.env.ALCHEMY_WEBHOOK_ID_ETH !== 'wh_xx')
+                    process.env.ALCHEMY_WEBHOOK_ID_ETH !== 'wh_xx'),
+        provider: 'alchemy'
       },
       'POLYGON': {
         webhook_id:  process.env.ALCHEMY_WEBHOOK_ID_POLYGON,
         signing_key: process.env.ALCHEMY_WEBHOOK_SIGNING_KEY_POLYGON,
         enabled: !!(process.env.ALCHEMY_WEBHOOK_ID_POLYGON &&
-                    process.env.ALCHEMY_WEBHOOK_ID_POLYGON !== 'xx')
+                    process.env.ALCHEMY_WEBHOOK_ID_POLYGON !== 'xx'),
+        provider: 'alchemy'
+      },
+      'VDCHAIN': {
+        webhook_id:  process.env.VDNOTIFY_WEBHOOK_ID,
+        signing_key: process.env.VDNOTIFY_SIGNING_KEY,
+        enabled: !!(process.env.VDNOTIFY_WEBHOOK_ID &&
+                    process.env.VDNOTIFY_WEBHOOK_ID !== 'wh_xx'),
+        provider: 'vdnotify'
       }
     };
     return map[network?.toUpperCase()] || null;
   }
 
+  // ── Network string from payload → our short_name ──
+  // Handles both Alchemy and VDNotify network strings
   detectNetwork(alchemyNetwork) {
     const map = {
       'ETH_MAINNET':      'ETH',
@@ -37,6 +52,7 @@ class AlchemyService {
       'BSC':              'BSC',
       'MATIC_MAINNET':    'POLYGON',
       'POLYGON_MAINNET':  'POLYGON',
+      'VDCHAIN_MAINNET':  'VDCHAIN',
     };
     return map[alchemyNetwork] || null;
   }
@@ -46,7 +62,7 @@ class AlchemyService {
     try {
       if (!signingKey || !receivedSignature) {
         console.log('[Alchemy] Signature or key missing — skipping verify');
-        return true; // Skip if no key configured
+        return true;
       }
 
       const body = Buffer.isBuffer(rawBody) ? rawBody.toString('utf8') : rawBody;
@@ -59,7 +75,6 @@ class AlchemyService {
       console.log('[Alchemy] Computed sig:', computed.slice(0, 16) + '...');
       console.log('[Alchemy] Received sig:', receivedSignature.slice(0, 16) + '...');
 
-      // Simple string compare (safe enough for webhook)
       return computed === receivedSignature;
 
     } catch (e) {
@@ -68,7 +83,8 @@ class AlchemyService {
     }
   }
 
-  async addAddresses(addresses, network) {
+  // ── Add addresses to Alchemy webhook (BSC/ETH/POLYGON) ──
+  async addAddressesToAlchemy(addresses, network) {
     try {
       if (process.env.ALCHEMY_NOTIFY_ENABLED !== 'true') {
         console.log('[Alchemy] Disabled in .env, skipping');
@@ -76,8 +92,8 @@ class AlchemyService {
       }
 
       const config = this.getChainConfig(network);
-      if (!config || !config.enabled) {
-        console.log(`[Alchemy] Chain ${network} not configured/enabled`);
+      if (!config || !config.enabled || config.provider !== 'alchemy') {
+        console.log(`[Alchemy] Chain ${network} not configured/enabled for Alchemy`);
         return false;
       }
 
@@ -119,49 +135,117 @@ class AlchemyService {
     }
   }
 
-  async removeAddresses(addresses, network) {
+  // ── Add addresses to VDNotify webhook (VDCHAIN) ──
+  async addAddressesToVDNotify(addresses) {
     try {
-      const config = this.getChainConfig(network);
-      if (!config || !config.enabled) return false;
+      const webhookId  = process.env.VDNOTIFY_WEBHOOK_ID;
+      const apiKey     = process.env.VDNOTIFY_API_KEY;
 
-      const authToken = process.env.ALCHEMY_AUTH_TOKEN;
-      if (!authToken) return false;
+      if (!webhookId || !apiKey) {
+        console.log('[VDNotify] Not configured, skipping');
+        return false;
+      }
+
+      if (webhookId === 'wh_xx') {
+        console.log('[VDNotify] Webhook ID not set');
+        return false;
+      }
 
       const addrArray = Array.isArray(addresses) ? addresses : [addresses];
+      console.log(`[VDNotify] Adding ${addrArray.length} address(es) to VDCHAIN...`);
 
       await axios.patch(
-        'https://dashboard.alchemy.com/api/update-webhook-addresses',
+        `https://vdnotify.vdscan.io/api/webhooks/${process.env.VDNOTIFY_WEBHOOK_UUID}/addresses`,
         {
-          webhook_id: config.webhook_id,
-          addresses_to_add: [],
-          addresses_to_remove: addrArray
+          addresses_to_add: addrArray,
+          addresses_to_remove: []
         },
         {
           headers: {
             'Content-Type': 'application/json',
-            'X-Alchemy-Token': authToken
+            'X-API-Key': apiKey
           },
           timeout: 15000
         }
       );
 
-      console.log(`[Alchemy] ✅ Removed from ${network}: ${addrArray.join(', ')}`);
+      console.log(`[VDNotify] ✅ Added to VDCHAIN: ${addrArray.join(', ')}`);
       return true;
 
     } catch (e) {
-      console.error('[Alchemy] removeAddresses error:', e.message);
+      const status = e.response?.status;
+      const msg = e.response?.data || e.message;
+      console.error(`[VDNotify] addAddresses failed (${status}):`, msg);
       return false;
     }
   }
 
+  // ── Remove addresses from Alchemy webhook ─────
+  async removeAddresses(addresses, network) {
+    try {
+      const config = this.getChainConfig(network);
+      if (!config || !config.enabled) return false;
+
+      const addrArray = Array.isArray(addresses) ? addresses : [addresses];
+
+      if (config.provider === 'vdnotify') {
+        // VDNotify remove
+        const apiKey = process.env.VDNOTIFY_API_KEY;
+        if (!apiKey) return false;
+
+        await axios.patch(
+          `https://vdnotify.vdscan.io/api/webhooks/${config.webhook_id}/addresses`,
+          { addresses_to_add: [], addresses_to_remove: addrArray },
+          { headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey }, timeout: 15000 }
+        );
+      } else {
+        // Alchemy remove
+        const authToken = process.env.ALCHEMY_AUTH_TOKEN;
+        if (!authToken) return false;
+
+        await axios.patch(
+          'https://dashboard.alchemy.com/api/update-webhook-addresses',
+          { webhook_id: config.webhook_id, addresses_to_add: [], addresses_to_remove: addrArray },
+          { headers: { 'Content-Type': 'application/json', 'X-Alchemy-Token': authToken }, timeout: 15000 }
+        );
+      }
+
+      console.log(`[Webhook] ✅ Removed from ${network}: ${addrArray.join(', ')}`);
+      return true;
+
+    } catch (e) {
+      console.error('[Webhook] removeAddresses error:', e.message);
+      return false;
+    }
+  }
+
+  // ── addAddresses - unified (backward compat) ──
+  async addAddresses(addresses, network) {
+    if (network === 'VDCHAIN') {
+      return this.addAddressesToVDNotify(addresses);
+    }
+    return this.addAddressesToAlchemy(addresses, network);
+  }
+
+  // ── Get all addresses from webhook ────────────
   async getWebhookAddresses(network) {
     try {
       const config = this.getChainConfig(network);
       if (!config || !config.enabled) return [];
 
+      if (config.provider === 'vdnotify') {
+        const apiKey = process.env.VDNOTIFY_API_KEY;
+        if (!apiKey) return [];
+        const response = await axios.get(
+          `https://vdnotify.vdscan.io/api/webhooks/${config.webhook_id}/addresses`,
+          { headers: { 'X-API-Key': apiKey }, timeout: 15000 }
+        );
+        return response.data?.addresses || [];
+      }
+
+      // Alchemy
       const authToken = process.env.ALCHEMY_AUTH_TOKEN;
       if (!authToken) return [];
-
       const response = await axios.get(
         'https://dashboard.alchemy.com/api/webhook-addresses',
         {
@@ -170,18 +254,18 @@ class AlchemyService {
           timeout: 15000
         }
       );
-
       return response.data?.data || [];
 
     } catch (e) {
-      console.error('[Alchemy] getWebhookAddresses error:', e.message);
+      console.error('[Webhook] getWebhookAddresses error:', e.message);
       return [];
     }
   }
 
+  // ── Sync all DB addresses to webhooks ─────────
   async syncAllAddresses() {
     try {
-      console.log('[Alchemy] Syncing all addresses...');
+      console.log('[Webhook] Syncing all addresses...');
 
       const addresses = await db.query(
         'SELECT network, address FROM user_deposit_addresses'
@@ -195,7 +279,6 @@ class AlchemyService {
       }
 
       for (const [network, addrs] of Object.entries(grouped)) {
-        if (network === 'VDCHAIN') continue;
         const config = this.getChainConfig(network);
         if (!config?.enabled) continue;
 
@@ -204,28 +287,28 @@ class AlchemyService {
           await this.addAddresses(batch, network);
           await new Promise(r => setTimeout(r, 500));
         }
-        console.log(`[Alchemy] Synced ${addrs.length} addresses for ${network}`);
+        console.log(`[Webhook] Synced ${addrs.length} addresses for ${network}`);
       }
 
-      console.log('[Alchemy] ✅ Sync complete');
+      console.log('[Webhook] ✅ Sync complete');
       return true;
 
     } catch (e) {
-      console.error('[Alchemy] syncAllAddresses error:', e.message);
+      console.error('[Webhook] syncAllAddresses error:', e.message);
       return false;
     }
   }
 
+  // ── Register single new user address ──────────
   async registerNewUserAddress(userId, network, address) {
     try {
-      if (network === 'VDCHAIN') return true;
       const ok = await this.addAddresses([address], network);
       if (ok) {
-        console.log(`[Alchemy] User ${userId} registered: ${address} (${network})`);
+        console.log(`[Webhook] User ${userId} registered: ${address} (${network})`);
       }
       return ok;
     } catch (e) {
-      console.error('[Alchemy] registerNewUserAddress error:', e.message);
+      console.error('[Webhook] registerNewUserAddress error:', e.message);
       return false;
     }
   }

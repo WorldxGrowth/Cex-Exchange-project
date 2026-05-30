@@ -27,7 +27,7 @@ class AlchemyWebhookProcessor {
         return { ok: true, ignored: true };
       }
 
-      // ── Signature verify ──────────────────────────
+      // ── Signature verify ──────────────────────
       // TODO: Re-enable after production testing
       // const config = alchemyService.getChainConfig(ourNetwork);
       // if (config?.signing_key) {
@@ -72,23 +72,28 @@ class AlchemyWebhookProcessor {
        WHERE LOWER(address) = $1 AND network = $2`,
       [toAddress, network]
     );
-    if (!userRow.rows[0]) return; // Not our address
+    if (!userRow.rows[0]) return;
 
     const userId = userRow.rows[0].user_id;
     let coinId, amount;
 
-    if (category === 'external' || asset === 'BNB' || asset === 'ETH') {
+    // Native coins: BNB, ETH, VDC
+    if (category === 'external' || asset === 'BNB' || asset === 'ETH' || asset === 'VDC') {
       const nativeCoin = await db.query(`
         SELECT c.id FROM coins c
         JOIN networks n ON n.id = c.network_id
         WHERE n.short_name = $1 AND c.contract_address IS NULL AND c.is_active = true
         LIMIT 1
       `, [network]);
-      if (!nativeCoin.rows[0]) return;
+      if (!nativeCoin.rows[0]) {
+        console.log(`[AlchemyWH] Native coin not found for ${network}`);
+        return;
+      }
       coinId = nativeCoin.rows[0].id;
       amount = parseFloat(activity.value || 0);
 
     } else if (category === 'token' && activity.rawContract?.address) {
+      // ERC20 tokens
       const contractAddr = activity.rawContract.address.toLowerCase();
       const tokenCoin = await db.query(`
         SELECT c.id FROM coins c
@@ -130,7 +135,6 @@ class AlchemyWebhookProcessor {
     try {
       await client.query('BEGIN');
 
-      // Duplicate check
       const existing = await client.query(
         'SELECT id FROM deposits WHERE txhash = $1', [txHash]
       );
@@ -169,13 +173,12 @@ class AlchemyWebhookProcessor {
            reference_id, description)
         VALUES ($1,$2,'deposit',$3,$4,$5,$6,$7)
       `, [userId, coinId, amount, balBefore, balBefore + amount,
-          txHash, `Alchemy Deposit ${amount} ${coinSymbol} via ${network}`]);
+          txHash, `Deposit ${amount} ${coinSymbol} via ${network}`]);
 
       await client.query('COMMIT');
 
       console.log(`[AlchemyWH] ✅ DEPOSIT: User ${userId} +${amount} ${coinSymbol} | ${network} | ${txHash.slice(0,12)}...`);
 
-      // Email
       db.query('SELECT email FROM users WHERE id = $1', [userId])
         .then(u => {
           if (u.rows[0]) {
@@ -185,7 +188,6 @@ class AlchemyWebhookProcessor {
           }
         }).catch(() => {});
 
-      // WebSocket
       try {
         const { getIO } = require('../websocket/socket');
         const io = getIO();
