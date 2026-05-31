@@ -1,5 +1,6 @@
-const db = require('../../config/database');
+const db             = require('../../config/database');
 const binanceAdapter = require('./binanceAdapter');
+const feeService     = require('../feeService');
 
 class HedgeEngine {
 
@@ -36,6 +37,8 @@ class HedgeEngine {
     }
   }
 
+  // ── Average fill price from Binance result ─────
+  // Multiple sources check karo — Binance format vary karta hai
   getAverageFillPrice(binanceResult) {
     const executedQty = parseFloat(binanceResult.executedQty || 0);
 
@@ -48,18 +51,12 @@ class HedgeEngine {
     }
 
     if (Array.isArray(binanceResult.fills) && binanceResult.fills.length > 0) {
-      let totalQty = 0;
-      let totalQuote = 0;
-
+      let totalQty = 0, totalQuote = 0;
       for (const fill of binanceResult.fills) {
-        const qty = parseFloat(fill.qty || 0);
+        const qty   = parseFloat(fill.qty   || 0);
         const price = parseFloat(fill.price || 0);
-        if (qty > 0 && price > 0) {
-          totalQty += qty;
-          totalQuote += qty * price;
-        }
+        if (qty > 0 && price > 0) { totalQty += qty; totalQuote += qty * price; }
       }
-
       if (totalQty > 0) return totalQuote / totalQty;
     }
 
@@ -67,7 +64,7 @@ class HedgeEngine {
     return fallbackPrice > 0 ? fallbackPrice : 0;
   }
 
-  // ── Main hedge function ────────────────────────
+  // ── Main hedge function (unchanged) ───────────
   async hedge({ ourOrderId, symbol, side, orderType, quantity, price, binanceSymbol }) {
     try {
       const settings = await this.getSettings();
@@ -78,7 +75,7 @@ class HedgeEngine {
       }
 
       const normalizedOrderType = String(orderType || 'limit').toLowerCase();
-      const isMarket = normalizedOrderType === 'market';
+      const isMarket    = normalizedOrderType === 'market';
       const targetSymbol = binanceSymbol || symbol;
 
       const isAlive = await binanceAdapter.ping();
@@ -89,9 +86,6 @@ class HedgeEngine {
       }
 
       let referencePrice = parseFloat(price || 0);
-
-      // Market order ke liye live Binance price se estimate lo.
-      // Limit order ke liye user price hi reference rahega.
       if (isMarket) {
         const livePrice = await binanceAdapter.getPrice(targetSymbol);
         if (livePrice > 0) referencePrice = livePrice;
@@ -115,10 +109,9 @@ class HedgeEngine {
         return { ok: false, reason: 'daily_limit_reached' };
       }
 
-      // Balance check
-      const asset = side === 'buy' ? 'USDT' : targetSymbol.replace(/USDT$/i, '');
+      const asset         = side === 'buy' ? 'USDT' : targetSymbol.replace(/USDT$/i, '');
       const binanceBalance = await binanceAdapter.getBalance(asset);
-      const balanceBuffer = isMarket ? 1.02 : 1.10;
+      const balanceBuffer  = isMarket ? 1.02 : 1.10;
 
       if (binanceBalance < (side === 'buy' ? orderValue * balanceBuffer : quantity)) {
         console.error(`[Hedge] Insufficient Binance balance: ${binanceBalance} ${asset}`);
@@ -128,8 +121,6 @@ class HedgeEngine {
 
       const clientOrderId = `VDX_${ourOrderId}`;
 
-      // Spread sirf LIMIT order pe lagao.
-      // MARKET order pe price Binance best available price se fill hota hai.
       let hedgePrice = referencePrice;
       if (!isMarket) {
         hedgePrice = this.applySpread(referencePrice, side, settings.spreadBuy, settings.spreadSell);
@@ -150,34 +141,21 @@ class HedgeEngine {
 
       console.log(`[Hedge] ✅ Binance order: ${result.orderId} | ${side} ${isMarket ? 'MARKET' : 'LIMIT'} ${quantity} ${symbol}`);
 
-      // DB log
       await db.query(`
         INSERT INTO binance_orders
           (our_order_id, binance_order_id, client_order_id, symbol, side,
            order_type, quantity, price, status, binance_status, raw_response)
         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'open',$9,$10)
         ON CONFLICT (client_order_id) DO UPDATE SET
-          binance_order_id = $2,
-          binance_status = $9,
-          raw_response = $10,
-          updated_at = NOW()
+          binance_order_id = $2, binance_status = $9,
+          raw_response = $10, updated_at = NOW()
       `, [
-        ourOrderId,
-        result.orderId,
-        clientOrderId,
-        symbol,
-        side,
-        isMarket ? 'market' : 'limit',
-        quantity,
-        isMarket ? null : hedgePrice,
-        result.status,
-        JSON.stringify(result)
+        ourOrderId, result.orderId, clientOrderId, symbol, side,
+        isMarket ? 'market' : 'limit', quantity,
+        isMarket ? null : hedgePrice, result.status, JSON.stringify(result)
       ]);
 
       const executedQty = parseFloat(result.executedQty || 0);
-
-      // Market order normally instantly FILLED hota hai.
-      // Agar Binance ne immediate fill diya hai to user balance update karo.
       if (executedQty > 0 || result.status === 'FILLED' || result.status === 'PARTIALLY_FILLED') {
         await this.processFill(ourOrderId, result);
       }
@@ -195,13 +173,15 @@ class HedgeEngine {
     }
   }
 
+  // ── Process fill — fee integrated ─────────────
+  // v2: feeService se dynamic fee + treasury credit
   async processFill(ourOrderId, binanceResult) {
     const client = await db.pool.connect();
     try {
       await client.query('BEGIN');
 
       const totalFilledQty = parseFloat(binanceResult.executedQty || 0);
-      const avgPrice = this.getAverageFillPrice(binanceResult);
+      const avgPrice       = this.getAverageFillPrice(binanceResult);
 
       if (totalFilledQty <= 0) {
         await client.query('ROLLBACK');
@@ -209,7 +189,7 @@ class HedgeEngine {
       }
 
       const orderRes = await client.query(`
-        SELECT o.*, tp.base_coin_id, tp.quote_coin_id,
+        SELECT o.*, tp.base_coin_id, tp.quote_coin_id, tp.id as pair_id,
                cb.symbol as base_symbol, cq.symbol as quote_symbol
         FROM orders o
         JOIN trading_pairs tp ON tp.id = o.pair_id
@@ -225,143 +205,186 @@ class HedgeEngine {
 
       const o = orderRes.rows[0];
 
+      // Idempotency check
       const boRes = await client.query(`
-        SELECT filled_qty
-        FROM binance_orders
-        WHERE our_order_id = $1
-        FOR UPDATE
+        SELECT filled_qty FROM binance_orders
+        WHERE our_order_id = $1 FOR UPDATE
       `, [ourOrderId]);
 
       const alreadySyncedQty = parseFloat(boRes.rows[0]?.filled_qty || 0);
-      const deltaFilledQty = Math.max(0, totalFilledQty - alreadySyncedQty);
+      const deltaFilledQty   = Math.max(0, totalFilledQty - alreadySyncedQty);
 
-      // Idempotency: same fill dobara process na ho.
       if (deltaFilledQty <= 0) {
         await client.query('COMMIT');
         return;
       }
 
       const userPriceRaw = parseFloat(o.price || 0);
-      const userPrice = userPriceRaw > 0 ? userPriceRaw : avgPrice;
+      const userPrice    = userPriceRaw > 0 ? userPriceRaw : avgPrice;
 
+      // ── v2: Dynamic fee from feeService ────────
+      // Binance pass-through = always taker (market/instant fill)
+      let feeRate = 0.001, feeType = 'percentage', feeSource = 'fallback';
+      try {
+        const feeInfo = await feeService.getFeeRate(o.user_id, o.pair_id, 'taker');
+        feeRate   = feeInfo.rate;
+        feeType   = feeInfo.type;
+        feeSource = feeInfo.source;
+      } catch (e) {
+        console.error('[Hedge] feeService error, using fallback:', e.message);
+      }
+
+      // ── Fee calculation ─────────────────────────
+      // BUY:  fee in base coin (BTC/XRP etc)
+      // SELL: fee in quote coin (USDT)
+      let feeAmount    = 0;
+      let grossAmount  = 0;
+      let netAmount    = 0;
+      let feeCoinId    = 0;
+
+      if (o.side === 'buy') {
+        grossAmount = deltaFilledQty;                    // base coin
+        feeAmount   = grossAmount * feeRate;
+        netAmount   = grossAmount - feeAmount;
+        feeCoinId   = o.base_coin_id;
+      } else {
+        grossAmount = deltaFilledQty * userPrice;        // USDT
+        feeAmount   = grossAmount * feeRate;
+        netAmount   = grossAmount - feeAmount;
+        feeCoinId   = o.quote_coin_id;
+      }
+
+      console.log(`[Hedge] Fee: ${feeAmount.toFixed(8)} (rate:${feeRate} src:${feeSource})`);
+
+      // ── Update binance_orders ──────────────────
       const binanceStatus =
-        binanceResult.status === 'FILLED' ? 'filled' :
-        binanceResult.status === 'PARTIALLY_FILLED' ? 'partially_filled' :
-        'open';
+        binanceResult.status === 'FILLED'           ? 'filled' :
+        binanceResult.status === 'PARTIALLY_FILLED' ? 'partially_filled' : 'open';
 
       await client.query(`
         UPDATE binance_orders SET
-          filled_qty = $1,
-          avg_fill_price = $2,
-          status = $3,
-          binance_status = $4,
+          filled_qty = $1, avg_fill_price = $2,
+          status = $3, binance_status = $4,
           raw_response = COALESCE($5, raw_response),
           updated_at = NOW()
         WHERE our_order_id = $6
       `, [
-        totalFilledQty,
-        avgPrice,
-        binanceStatus,
+        totalFilledQty, avgPrice, binanceStatus,
         binanceResult.status || 'FILLED',
-        JSON.stringify(binanceResult),
-        ourOrderId
+        JSON.stringify(binanceResult), ourOrderId
       ]);
 
+      // ── Update orders table ────────────────────
       const newFilledQty = parseFloat(o.filled_qty || 0) + deltaFilledQty;
       const newRemaining = Math.max(0, parseFloat(o.quantity) - newFilledQty);
       const newStatus    = newRemaining <= 0 ? 'filled' : 'partially_filled';
 
       await client.query(`
         UPDATE orders SET
-          filled_qty = $1,
-          remaining_qty = $2,
-          avg_fill_price = $3,
-          status = $4,
+          filled_qty = $1, remaining_qty = $2,
+          avg_fill_price = $3, status = $4,
+          fee = COALESCE(fee,0) + $5,
           updated_at = NOW()
-        WHERE order_id = $5
-      `, [newFilledQty, newRemaining, avgPrice, newStatus, ourOrderId]);
+        WHERE order_id = $6
+      `, [newFilledQty, newRemaining, avgPrice, newStatus, feeAmount, ourOrderId]);
 
+      // ── User balance update (net amount after fee) ──
       if (o.side === 'buy') {
+        // Credit base coin NET (gross - fee)
         await client.query(`
           INSERT INTO balances (user_id, coin_id, account_type, available, locked)
           VALUES ($1,$2,'spot',$3,0)
           ON CONFLICT (user_id, coin_id, account_type)
           DO UPDATE SET available = balances.available + $3, updated_at = NOW()
-        `, [o.user_id, o.base_coin_id, deltaFilledQty]);
+        `, [o.user_id, o.base_coin_id, netAmount]);
 
+        // Release locked USDT
         const usedUsdt = deltaFilledQty * userPrice * 1.001;
         await client.query(`
           UPDATE balances
-          SET locked = GREATEST(0, locked - $1),
-              updated_at = NOW()
+          SET locked = GREATEST(0, locked - $1), updated_at = NOW()
           WHERE user_id=$2 AND coin_id=$3 AND account_type='spot'
         `, [usedUsdt, o.user_id, o.quote_coin_id]);
 
       } else {
-        const usdtAmount = deltaFilledQty * userPrice;
+        // Credit USDT NET (gross - fee)
         await client.query(`
           INSERT INTO balances (user_id, coin_id, account_type, available, locked)
           VALUES ($1,$2,'spot',$3,0)
           ON CONFLICT (user_id, coin_id, account_type)
           DO UPDATE SET available = balances.available + $3, updated_at = NOW()
-        `, [o.user_id, o.quote_coin_id, usdtAmount]);
+        `, [o.user_id, o.quote_coin_id, netAmount]);
 
+        // Release locked base coin
         await client.query(`
           UPDATE balances
-          SET locked = GREATEST(0, locked - $1),
-              updated_at = NOW()
+          SET locked = GREATEST(0, locked - $1), updated_at = NOW()
           WHERE user_id=$2 AND coin_id=$3 AND account_type='spot'
         `, [deltaFilledQty, o.user_id, o.base_coin_id]);
       }
 
-      const creditCoin   = o.side === 'buy' ? o.base_coin_id : o.quote_coin_id;
-      const creditAmount = o.side === 'buy' ? deltaFilledQty : deltaFilledQty * userPrice;
-      const creditSymbol = o.side === 'buy' ? o.base_symbol : o.quote_symbol;
+      // ── Treasury: collect fee ──────────────────
+      if (feeAmount > 0) {
+        await feeService.creditToTreasury(
+          client,
+          feeCoinId,
+          feeAmount,
+          ourOrderId,
+          `Binance fill fee: ${o.side} ${deltaFilledQty} ${o.base_symbol} @ ${avgPrice}`
+        );
+      }
 
+      // ── Ledger: user trade_fill (net amount) ───
+      const creditSymbol = o.side === 'buy' ? o.base_symbol : o.quote_symbol;
       await client.query(`
         INSERT INTO ledger (user_id, coin_id, type, amount, reference_id, description)
         VALUES ($1,$2,'trade_fill',$3,$4,$5)
       `, [
-        o.user_id,
-        creditCoin,
-        creditAmount,
-        ourOrderId,
-        `${o.side.toUpperCase()} ${deltaFilledQty} ${o.base_symbol} @ ${avgPrice} via Binance`
+        o.user_id, feeCoinId, netAmount, ourOrderId,
+        `${o.side.toUpperCase()} ${deltaFilledQty} ${o.base_symbol} @ ${avgPrice} | fee:${feeAmount.toFixed(8)} via Binance`
       ]).catch(() => {});
 
-      const profit = o.side === 'buy'
+      // ── Mirror profit (spread profit tracking) ─
+      const spreadProfit = o.side === 'buy'
         ? (userPrice - avgPrice) * deltaFilledQty
         : (avgPrice - userPrice) * deltaFilledQty;
 
-      if (Math.abs(profit) > 0.0001) {
+      if (Math.abs(spreadProfit) > 0.0001 || Math.abs(feeAmount) > 0.0001) {
         await client.query(`
           INSERT INTO mirror_profits
             (our_order_id, binance_order_id, symbol, side,
-             our_price, binance_price, quantity, profit_usdt)
-          VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+             our_price, binance_price, quantity,
+             profit_usdt, trading_fee_usdt, net_profit_usdt)
+          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+          ON CONFLICT DO NOTHING
         `, [
-          ourOrderId,
-          binanceResult.orderId,
-          binanceResult.symbol,
-          o.side,
-          userPrice,
-          avgPrice,
-          deltaFilledQty,
-          profit
+          ourOrderId, binanceResult.orderId,
+          binanceResult.symbol || o.base_symbol + 'USDT',
+          o.side, userPrice, avgPrice, deltaFilledQty,
+          spreadProfit,
+          feeAmount,
+          spreadProfit + feeAmount
         ]).catch(() => {});
       }
 
       await client.query('COMMIT');
-      console.log(`[Hedge] ✅ Fill processed: User ${o.user_id} +${creditAmount} ${creditSymbol}`);
 
+      console.log(
+        `[Hedge] ✅ Fill: User ${o.user_id}` +
+        ` +${netAmount.toFixed(6)} ${creditSymbol}` +
+        ` | fee:${feeAmount.toFixed(6)} | spread:${spreadProfit.toFixed(6)}`
+      );
+
+      // ── WebSocket notify ───────────────────────
       try {
         const { getIO } = require('../../websocket/socket');
         const io = getIO();
         if (io) io.to(`user:${o.user_id}`).emit('order_filled', {
-          order_id: ourOrderId,
+          order_id:   ourOrderId,
           filled_qty: deltaFilledQty,
-          avg_price: avgPrice,
-          status: newStatus
+          avg_price:  avgPrice,
+          status:     newStatus,
+          fee:        feeAmount
         });
       } catch (e) {}
 
@@ -373,6 +396,8 @@ class HedgeEngine {
     }
   }
 
+  // ── Cancel our order if hedge fails ───────────
+  // (unchanged — same as before)
   async cancelFailedOrder(ourOrderId, reason) {
     const client = await db.pool.connect();
     try {
@@ -385,10 +410,7 @@ class HedgeEngine {
         WHERE o.order_id=$1 FOR UPDATE
       `, [ourOrderId]);
 
-      if (!order.rows[0]) {
-        await client.query('ROLLBACK');
-        return;
-      }
+      if (!order.rows[0]) { await client.query('ROLLBACK'); return; }
 
       const o = order.rows[0];
       if (!['open', 'partially_filled'].includes(o.status)) {
@@ -396,7 +418,7 @@ class HedgeEngine {
         return;
       }
 
-      const orderPrice = parseFloat(o.price || 0);
+      const orderPrice   = parseFloat(o.price || 0);
       const refundCoinId = o.side === 'buy' ? o.quote_coin_id : o.base_coin_id;
       const refundAmt    = o.side === 'buy'
         ? parseFloat(o.remaining_qty) * orderPrice * 1.001
@@ -428,11 +450,12 @@ class HedgeEngine {
     }
   }
 
+  // ── Cancel hedge on Binance ────────────────────
+  // (unchanged)
   async cancelHedge(ourOrderId) {
     try {
       const bo = await db.query(
-        'SELECT * FROM binance_orders WHERE our_order_id=$1',
-        [ourOrderId]
+        'SELECT * FROM binance_orders WHERE our_order_id=$1', [ourOrderId]
       );
       if (!bo.rows[0]) return { ok: true, reason: 'no_hedge_order' };
 
@@ -442,14 +465,12 @@ class HedgeEngine {
       }
 
       const result = await binanceAdapter.cancelOrder(
-        binanceOrder.symbol,
-        binanceOrder.binance_order_id
+        binanceOrder.symbol, binanceOrder.binance_order_id
       );
 
       if (result.status === 'ALREADY_FILLED_OR_CANCELLED') {
         const status = await binanceAdapter.getOrderStatus(
-          binanceOrder.symbol,
-          binanceOrder.client_order_id
+          binanceOrder.symbol, binanceOrder.client_order_id
         );
         if (status?.status === 'FILLED') {
           return { ok: false, reason: 'already_filled' };
