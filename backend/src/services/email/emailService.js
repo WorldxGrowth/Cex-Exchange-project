@@ -398,3 +398,47 @@ module.exports = {
   sendForgotPasswordEmail, sendLargeWithdrawalAlert,
   sendBulkEmail, sendTestEmail
 };
+
+// ── OTP Email ─────────────────────────────────────
+const sendOTPEmail = async (user, otp, type = 'login') => {
+  const typeLabels = {
+    login:      'Login Verification',
+    register:   'Email Verification',
+    withdrawal: 'Withdrawal Confirmation',
+    bind_phone: 'Phone Binding'
+  };
+  const label = typeLabels[type] || 'Verification';
+
+  const content = `
+    <h2 style="color:#eaecef;margin:0 0 16px;">Your ${label} Code</h2>
+    <p style="color:#848e9c;margin:0 0 24px;line-height:1.6;">
+      Use the following OTP to complete your ${label.toLowerCase()}.
+      This code expires in <strong style="color:#f0b90b;">5 minutes</strong>.
+    </p>
+    <div style="text-align:center;margin:24px 0;">
+      <div style="display:inline-block;background:#0b0e11;border:2px solid #f0b90b;
+                  border-radius:12px;padding:16px 40px;">
+        <span style="font-size:36px;font-weight:800;letter-spacing:12px;
+                     color:#f0b90b;">${otp}</span>
+      </div>
+    </div>
+    <p style="color:#848e9c;font-size:13px;text-align:center;margin:16px 0 0;">
+      Never share this code with anyone. VDExchange will never ask for your OTP.
+    </p>
+    <div style="margin:20px 0 0;padding:12px;background:#2b2f36;border-radius:8px;
+                border-left:3px solid #f6465d;">
+      <p style="margin:0;color:#848e9c;font-size:12px;">
+        ⚠️ If you didn't request this, please secure your account immediately.
+      </p>
+    </div>
+  `;
+
+  await transporter.sendMail({
+    from:    `"VDExchange" <${process.env.GMAIL_USER}>`,
+    to:      user.email,
+    subject: `${otp} is your VDExchange ${label} code`,
+    html:    baseTemplate(content, `${label} - VDExchange`),
+  });
+};
+
+module.exports = Object.assign(module.exports, { sendOTPEmail });

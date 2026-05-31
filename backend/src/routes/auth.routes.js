@@ -15,3 +15,9 @@ module.exports = router;
 const { googleAuth, googleCallback } = require('../controllers/auth.controller');
 router.get('/google', googleAuth);
 router.get('/google/callback', googleCallback);
+
+// ── OTP Routes ────────────────────────────────────
+const { sendOTPHandler, verifyOTPHandler, checkIdentifier } = require('../controllers/otp.controller');
+router.post('/otp/send',   sendOTPHandler);
+router.post('/otp/verify', verifyOTPHandler);
+router.post('/check',      checkIdentifier); // email/phone exists check
