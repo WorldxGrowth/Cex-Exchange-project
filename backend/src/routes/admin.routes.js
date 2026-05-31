@@ -120,3 +120,13 @@ router.put('/networks/:id',    updateNetwork);
 router.get('/announcements',           getAnnouncements);
 router.put('/announcements/:id',       updateAnnouncement);
 router.delete('/announcements/:id',    deleteAnnouncement);
+
+// ── CMS Pages ─────────────────────────────────
+const { getCmsPages, getCmsPage, addCmsPage,
+        updateCmsPage, deleteCmsPage } = require('../controllers/admin.controller');
+
+router.get('/cms',         getCmsPages);
+router.get('/cms/:id',     getCmsPage);
+router.post('/cms',        addCmsPage);
+router.put('/cms/:id',     updateCmsPage);
+router.delete('/cms/:id',  deleteCmsPage);

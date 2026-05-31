@@ -65,6 +65,7 @@ export default function MainLayout() {
       children: [
         { key: '/banners',                icon: <PictureOutlined />,      label: 'Banners' },
         { key: '/content/announcements',  icon: <NotificationOutlined />, label: 'Announcements' },
+        { key: '/content/cms',            icon: <FileTextOutlined />,      label: 'CMS Pages' },
       ]
     },
     { key: '/reports',     icon: <BarChartOutlined />,   label: 'Reports' },

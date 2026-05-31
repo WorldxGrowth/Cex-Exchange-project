@@ -22,6 +22,7 @@ import BinanceCreds from './pages/trading/BinanceCreds';
 import WithdrawalSettings from './pages/finance/WithdrawalSettings';
 import Networks from './pages/finance/Networks';
 import Announcements from './pages/content/Announcements';
+import CmsPages from './pages/content/CmsPages';
 
 const isAuth = () => !!localStorage.getItem('admin_token');
 const PrivateRoute = ({ children }) =>
@@ -59,6 +60,7 @@ export default function App() {
             <Route path="finance/withdrawal-settings" element={<WithdrawalSettings />} />
             <Route path="finance/networks"    element={<Networks />} />
             <Route path="content/announcements" element={<Announcements />} />
+            <Route path="content/cms" element={<CmsPages />} />
             <Route path="reports"             element={<Reports />} />
             <Route path="listings"            element={<Listings />} />
             <Route path="scanner"             element={<Scanner />} />

@@ -374,3 +374,42 @@ module.exports = {
   getRecentTrades, getKlines,
   updatePricesFromBinance, updatePricesFromCoingecko
 };
+
+// ================================
+// CMS PUBLIC APIs (no auth)
+// ================================
+const getCmsPagePublic = async (req, res) => {
+  try {
+    const { slug } = req.params;
+    const page = await db.query(`
+      SELECT id, slug, title, subtitle, icon, content, content_type,
+             featured_image, meta_title, meta_desc, meta_keywords,
+             og_image, page_type, view_count, updated_at
+      FROM cms_pages
+      WHERE slug=$1 AND is_published=true
+    `, [slug]);
+
+    if (!page.rows[0]) return error(res, 'Page not found', 404);
+
+    // View count increment
+    db.query('UPDATE cms_pages SET view_count=view_count+1 WHERE slug=$1', [slug]).catch(()=>{});
+
+    return success(res, page.rows[0]);
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+const getCmsFooterPages = async (req, res) => {
+  try {
+    const pages = await db.query(`
+      SELECT id, slug, title, icon, page_type, sort_order
+      FROM cms_pages
+      WHERE is_published=true AND show_in_footer=true
+      ORDER BY sort_order
+    `);
+    return success(res, pages.rows);
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+module.exports = Object.assign(module.exports, {
+  getCmsPagePublic, getCmsFooterPages
+});

@@ -1133,3 +1133,107 @@ module.exports = Object.assign(module.exports, {
   getNetworks, updateNetwork,
   getAnnouncements, updateAnnouncement, deleteAnnouncement,
 });
+
+// ================================
+// CMS PAGES (NEW)
+// ================================
+const getCmsPages = async (req, res) => {
+  try {
+    const pages = await db.query(
+      'SELECT * FROM cms_pages ORDER BY sort_order'
+    );
+    return success(res, pages.rows);
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+const getCmsPage = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const page = await db.query(
+      'SELECT * FROM cms_pages WHERE id=$1', [id]
+    );
+    if (!page.rows[0]) return error(res, 'Page not found');
+    return success(res, page.rows[0]);
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+const addCmsPage = async (req, res) => {
+  try {
+    const { slug, title, subtitle, icon, content, content_type,
+            featured_image, meta_title, meta_desc, meta_keywords,
+            og_image, is_published, show_in_footer, show_in_header,
+            sort_order, page_type } = req.body;
+
+    if (!slug || !title) return error(res, 'slug and title required');
+
+    const page = await db.query(`
+      INSERT INTO cms_pages
+        (slug, title, subtitle, icon, content, content_type,
+         featured_image, meta_title, meta_desc, meta_keywords,
+         og_image, is_published, show_in_footer, show_in_header,
+         sort_order, page_type, created_by)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)
+      RETURNING *
+    `, [slug, title, subtitle, icon, content, content_type || 'html',
+        featured_image, meta_title, meta_desc, meta_keywords,
+        og_image, is_published !== false, show_in_footer !== false,
+        show_in_header || false, sort_order || 0,
+        page_type || 'info', req.adminId]);
+
+    return success(res, page.rows[0], 'Page created', 201);
+  } catch (err) {
+    if (err.code === '23505') return error(res, 'Slug already exists');
+    return error(res, 'Failed: ' + err.message, 500);
+  }
+};
+
+const updateCmsPage = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const allowed = [
+      'title', 'subtitle', 'icon', 'content', 'content_type',
+      'featured_image', 'meta_title', 'meta_desc', 'meta_keywords',
+      'og_image', 'is_published', 'show_in_footer', 'show_in_header',
+      'sort_order', 'page_type'
+    ];
+
+    const updates = [];
+    const values = [];
+    let i = 1;
+
+    for (const [key, val] of Object.entries(req.body)) {
+      if (allowed.includes(key)) {
+        updates.push(`${key}=$${i++}`);
+        values.push(val);
+      }
+    }
+
+    if (updates.length === 0) return error(res, 'No valid fields');
+    updates.push(`updated_at=NOW()`, `updated_by=${req.adminId || 'NULL'}`);
+    values.push(id);
+
+    const result = await db.query(
+      `UPDATE cms_pages SET ${updates.join(',')} WHERE id=$${i} RETURNING *`,
+      values
+    );
+    return success(res, result.rows[0], 'Page updated');
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+const deleteCmsPage = async (req, res) => {
+  try {
+    const { id } = req.params;
+    // Default pages protect karo
+    const page = await db.query('SELECT slug FROM cms_pages WHERE id=$1', [id]);
+    const protectedSlugs = ['privacy-policy', 'terms', 'about'];
+    if (protectedSlugs.includes(page.rows[0]?.slug)) {
+      return error(res, 'Cannot delete protected pages');
+    }
+    await db.query('DELETE FROM cms_pages WHERE id=$1', [id]);
+    return success(res, {}, 'Page deleted');
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+module.exports = Object.assign(module.exports, {
+  getCmsPages, getCmsPage, addCmsPage, updateCmsPage, deleteCmsPage,
+});

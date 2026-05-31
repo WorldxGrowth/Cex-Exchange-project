@@ -126,3 +126,12 @@ Object.assign(adminAPI, {
   updateAnnouncement: (id, data) => api.put(`/admin/announcements/${id}`, data),
   deleteAnnouncement: (id) => api.delete(`/admin/announcements/${id}`),
 });
+
+// CMS Admin APIs
+Object.assign(adminAPI, {
+  getCmsPages:  () => api.get('/admin/cms'),
+  getCmsPage:   (id) => api.get(`/admin/cms/${id}`),
+  addCmsPage:   (data) => api.post('/admin/cms', data),
+  updateCmsPage:(id, data) => api.put(`/admin/cms/${id}`, data),
+  deleteCmsPage:(id) => api.delete(`/admin/cms/${id}`),
+});

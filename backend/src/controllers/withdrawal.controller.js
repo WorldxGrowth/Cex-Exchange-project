@@ -30,22 +30,41 @@ const checkWithdrawAllowed = async (coinSymbol) => {
   if (!res.rows[0]) return { allowed: false, reason: 'Coin not found' };
   const c = res.rows[0];
 
-  // 1. Maintenance check
-  if (c.maintenance_mode) {
+  if (c.maintenance_mode)
     return { allowed: false, reason: c.withdraw_notice || `${coinSymbol} is under maintenance` };
-  }
-  // 2. Withdraw enabled check
-  if (!c.is_withdraw) {
+
+  if (!c.is_withdraw)
     return { allowed: false, reason: c.withdraw_disabled_reason || `Withdrawals disabled for ${coinSymbol}` };
-  }
-  // 3. Scheduled withdraw check
-  if (c.withdraw_enabled_at && new Date(c.withdraw_enabled_at) > new Date()) {
-    return { allowed: false, reason: c.withdraw_notice || `Withdrawals for ${coinSymbol} will be available at ${new Date(c.withdraw_enabled_at).toUTCString()}` };
-  }
+
+  if (c.withdraw_enabled_at && new Date(c.withdraw_enabled_at) > new Date())
+    return { allowed: false, reason: c.withdraw_notice || `Withdrawals for ${coinSymbol} available at ${new Date(c.withdraw_enabled_at).toUTCString()}` };
 
   return { allowed: true };
 };
-// ── End Phase 1 ───────────────────────────────────
+
+// ── Dynamic fee calculator ─────────────────────────
+// fixed_usd:  fee_qty = fee_fixed / coin_price  (e.g. $1 USDT fee → ETH qty at current price)
+// fixed_qty:  fee_qty = fee_fixed               (e.g. 0.001 BNB direct)
+const calculateFee = async (coinId, feeFixed, feeType) => {
+  if (feeType === 'fixed_qty') {
+    return parseFloat(feeFixed);
+  }
+
+  // fixed_usd: live price se qty nikalo
+  const priceRes = await db.query(
+    'SELECT price_usdt FROM price_feeds WHERE coin_id = $1', [coinId]
+  );
+  const price = parseFloat(priceRes.rows[0]?.price_usdt || 0);
+
+  if (price <= 0) {
+    // Price nahi mila to fixed_qty fallback
+    console.warn(`[Fee] No price for coin ${coinId}, using fixed_qty fallback`);
+    return parseFloat(feeFixed);
+  }
+
+  const feeQty = parseFloat(feeFixed) / price;
+  return parseFloat(feeQty.toFixed(8));
+};
 
 // Get withdrawal settings + balance for a coin
 const getWithdrawInfo = async (req, res) => {
@@ -53,10 +72,8 @@ const getWithdrawInfo = async (req, res) => {
     const { coin } = req.query;
     if (!coin) return error(res, 'coin required');
 
-    // ── Phase 1 check ─────────────────────────────
     const check = await checkWithdrawAllowed(coin);
     if (!check.allowed) return error(res, check.reason);
-    // ── End check ─────────────────────────────────
 
     const result = await db.query(`
       SELECT c.id, c.symbol, c.name, c.logo_url, c.decimals,
@@ -64,10 +81,13 @@ const getWithdrawInfo = async (req, res) => {
              n.short_name as network, n.name as network_name,
              ws.min_amount, ws.max_amount, ws.fee_fixed,
              ws.fee_percent, ws.auto_approve_limit, ws.is_enabled,
+             ws.fee_type,
+             COALESCE(pf.price_usdt, 0) as price_usdt,
              b.available
       FROM coins c
       LEFT JOIN networks n ON n.id = c.network_id
       LEFT JOIN withdrawal_settings ws ON ws.coin_id = c.id
+      LEFT JOIN price_feeds pf ON pf.coin_id = c.id
       LEFT JOIN balances b ON b.coin_id = c.id
         AND b.user_id = $1 AND b.account_type = 'spot'
       WHERE c.symbol = $2 AND c.is_active = true
@@ -76,20 +96,29 @@ const getWithdrawInfo = async (req, res) => {
     if (!result.rows[0]) return error(res, 'Coin not found');
     const info = result.rows[0];
 
-    if (!info.is_enabled)
-      return error(res, 'Withdrawals disabled for this coin');
+    if (!info.is_enabled) return error(res, 'Withdrawals disabled for this coin');
+
+    // Dynamic fee calculation for display
+    const feeQty = await calculateFee(
+      info.id, info.fee_fixed, info.fee_type || 'fixed_qty'
+    );
 
     return success(res, {
-      coin: info.symbol,
-      name: info.name,
-      logo_url: info.logo_url,
-      network: info.network,
-      network_name: info.network_name,
-      available: parseFloat(info.available || 0),
-      min_amount: parseFloat(info.min_amount || 1),
-      max_amount: parseFloat(info.max_amount || 100000),
-      fee_fixed: parseFloat(info.fee_fixed || 1),
-      fee_percent: parseFloat(info.fee_percent || 0),
+      coin:               info.symbol,
+      name:               info.name,
+      logo_url:           info.logo_url,
+      network:            info.network,
+      network_name:       info.network_name,
+      available:          parseFloat(info.available || 0),
+      min_amount:         parseFloat(info.min_amount || 1),
+      max_amount:         parseFloat(info.max_amount || 100000),
+      fee_type:           info.fee_type || 'fixed_qty',
+      fee_fixed:          parseFloat(info.fee_fixed || 0),
+      fee_qty:            feeQty,           // actual qty deducted
+      fee_usd:            info.fee_type === 'fixed_usd'
+                            ? parseFloat(info.fee_fixed)
+                            : feeQty * parseFloat(info.price_usdt),
+      price_usdt:         parseFloat(info.price_usdt || 0),
       auto_approve_limit: parseFloat(info.auto_approve_limit || 100),
     });
   } catch (err) {
@@ -115,19 +144,18 @@ const requestWithdrawal = async (req, res) => {
     if (!ethers.utils.isAddress(address))
       return error(res, 'Invalid wallet address');
 
-    // ── Phase 1 check ─────────────────────────────
+    // Phase 1 check
     const check = await checkWithdrawAllowed(coin);
     if (!check.allowed) {
       await client.query('ROLLBACK');
       return error(res, check.reason);
     }
-    // ── End check ─────────────────────────────────
 
     const coinData = await client.query(`
       SELECT c.id as coin_id, c.symbol, c.decimals, c.contract_address,
              c.is_withdraw, n.id as network_id, n.short_name as network_name,
-             ws.min_amount, ws.max_amount, ws.fee_fixed, ws.fee_percent,
-             ws.auto_approve_limit, ws.is_enabled
+             ws.min_amount, ws.max_amount, ws.fee_fixed,
+             ws.fee_type, ws.auto_approve_limit, ws.is_enabled
       FROM coins c
       LEFT JOIN networks n ON n.id = c.network_id
       LEFT JOIN withdrawal_settings ws ON ws.coin_id = c.id
@@ -145,12 +173,17 @@ const requestWithdrawal = async (req, res) => {
     if (amt > parseFloat(c.max_amount))
       return error(res, `Max withdrawal: ${c.max_amount} ${coin}`);
 
-    const feeFixed   = parseFloat(c.fee_fixed || 0);
-    const feePercent = parseFloat(c.fee_percent || 0);
-    const fee        = feeFixed + (amt * feePercent / 100);
-    const totalDeduct = amt + fee;
+    // ── Dynamic fee calculation ────────────────────
+    const feeQty = await calculateFee(
+      c.coin_id, c.fee_fixed, c.fee_type || 'fixed_qty'
+    );
+
+    const totalDeduct = amt + feeQty;
     const receiveAmt  = amt;
 
+    console.log(`[Withdraw] ${coin}: amt=${amt} fee=${feeQty} (${c.fee_type}) total=${totalDeduct}`);
+
+    // Balance check
     const balance = await client.query(`
       SELECT available FROM balances
       WHERE user_id = $1 AND coin_id = $2 AND account_type = 'spot'
@@ -159,8 +192,9 @@ const requestWithdrawal = async (req, res) => {
 
     const available = parseFloat(balance.rows[0]?.available || 0);
     if (available < totalDeduct)
-      return error(res, `Insufficient balance. Need: ${totalDeduct.toFixed(6)}, Available: ${available.toFixed(6)}`);
+      return error(res, `Insufficient balance. Need: ${totalDeduct.toFixed(6)} ${coin}, Available: ${available.toFixed(6)}`);
 
+    // Deduct balance
     await client.query(`
       UPDATE balances SET available = available - $1, updated_at = NOW()
       WHERE user_id = $2 AND coin_id = $3 AND account_type = 'spot'
@@ -177,7 +211,7 @@ const requestWithdrawal = async (req, res) => {
       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
       RETURNING *
     `, [req.user.id, c.coin_id, c.network_id, txId,
-        address, amt, fee, receiveAmt, status]);
+        address, amt, feeQty, receiveAmt, status]);
 
     await client.query(`
       INSERT INTO ledger (user_id, coin_id, type, amount,
@@ -185,25 +219,24 @@ const requestWithdrawal = async (req, res) => {
       VALUES ($1,$2,'withdrawal',$3,$4,$5,$6,$7)
     `, [req.user.id, c.coin_id, totalDeduct, available,
         available - totalDeduct, txId,
-        `Withdraw ${receiveAmt} ${coin} to ${address.slice(0,8)}...`
+        `Withdraw ${receiveAmt} ${coin} | fee:${feeQty.toFixed(8)} (${c.fee_type})`
     ]).catch(() => {});
 
     await client.query('COMMIT');
 
-    // Email - safe async (existing)
+    // Email async
     db.query('SELECT email FROM users WHERE id = $1', [req.user.id])
       .then(u => {
         if (u.rows[0]) {
           sendEmailSafe('sendWithdrawalEmail', u.rows[0], {
-            symbol: coin, amount: amt, fee,
-            receive_amount: receiveAmt,
-            to_address: address,
+            symbol: coin, amount: amt, fee: feeQty,
+            receive_amount: receiveAmt, to_address: address,
             status, tx_id: txId, txhash: null
           });
         }
       }).catch(() => {});
 
-    // Auto process (existing)
+    // Auto process
     if (status === 'processing') {
       processWithdrawal(withdrawal.rows[0].id).catch(err => {
         console.error('Auto process error:', err.message);
@@ -211,8 +244,12 @@ const requestWithdrawal = async (req, res) => {
     }
 
     return success(res, {
-      tx_id: txId, amount: amt, fee,
-      receive_amount: receiveAmt, status,
+      tx_id:          txId,
+      amount:         amt,
+      fee:            feeQty,
+      fee_type:       c.fee_type,
+      receive_amount: receiveAmt,
+      status,
       message: status === 'processing'
         ? 'Processing automatically'
         : 'Pending admin approval'
@@ -227,7 +264,7 @@ const requestWithdrawal = async (req, res) => {
   }
 };
 
-// Process withdrawal on blockchain (existing - unchanged)
+// Process withdrawal on blockchain (unchanged)
 const processWithdrawal = async (withdrawalId) => {
   const client = await db.pool.connect();
   try {
@@ -297,7 +334,7 @@ const processWithdrawal = async (withdrawalId) => {
   }
 };
 
-// Get withdrawal history (existing - unchanged)
+// Get withdrawal history (unchanged)
 const getWithdrawalHistory = async (req, res) => {
   try {
     const history = await db.query(`
@@ -311,12 +348,10 @@ const getWithdrawalHistory = async (req, res) => {
       ORDER BY w.created_at DESC LIMIT 50
     `, [req.user.id]);
     return success(res, history.rows);
-  } catch (err) {
-    return error(res, 'Failed', 500);
-  }
+  } catch (err) { return error(res, 'Failed', 500); }
 };
 
-// Admin: approve withdrawal (existing - unchanged)
+// Admin: approve withdrawal (unchanged)
 const adminApproveWithdrawal = async (req, res) => {
   try {
     const { withdrawal_id } = req.params;
@@ -326,8 +361,8 @@ const adminApproveWithdrawal = async (req, res) => {
       return error(res, 'Can only approve pending withdrawals');
 
     await db.query(`
-      UPDATE withdrawals SET status = 'processing',
-        updated_at = NOW() WHERE id = $1
+      UPDATE withdrawals SET status = 'processing', updated_at = NOW()
+      WHERE id = $1
     `, [withdrawal_id]);
 
     processWithdrawal(parseInt(withdrawal_id)).catch(err => {
@@ -335,12 +370,10 @@ const adminApproveWithdrawal = async (req, res) => {
     });
 
     return success(res, {}, 'Withdrawal approved and processing');
-  } catch (err) {
-    return error(res, 'Failed', 500);
-  }
+  } catch (err) { return error(res, 'Failed', 500); }
 };
 
-// Admin: reject withdrawal (existing - unchanged)
+// Admin: reject withdrawal (unchanged)
 const adminRejectWithdrawal = async (req, res) => {
   const client = await db.pool.connect();
   try {
@@ -372,9 +405,7 @@ const adminRejectWithdrawal = async (req, res) => {
 
     db.query('SELECT email FROM users WHERE id = $1', [w.user_id])
       .then(u => {
-        if (u.rows[0]) {
-          sendEmailSafe('sendWithdrawalRejectedEmail', u.rows[0], w, reason);
-        }
+        if (u.rows[0]) sendEmailSafe('sendWithdrawalRejectedEmail', u.rows[0], w, reason);
       }).catch(() => {});
 
     return success(res, {}, 'Withdrawal rejected and refunded');

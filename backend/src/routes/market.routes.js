@@ -14,3 +14,8 @@ router.get('/trades/:symbol', getRecentTrades);
 router.get('/klines/:symbol', getKlines);
 
 module.exports = router;
+
+// CMS Public (no auth)
+const { getCmsPagePublic, getCmsFooterPages } = require('../controllers/market.controller');
+router.get('/pages/footer', getCmsFooterPages);      // footer menu
+router.get('/pages/:slug',  getCmsPagePublic);        // page content
