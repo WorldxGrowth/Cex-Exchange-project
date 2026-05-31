@@ -28,6 +28,8 @@ import Orders from './pages/orders/Orders';
 import DepositHistory from './pages/assets/DepositHistory';
 import DepositDetail from './pages/assets/DepositDetail';
 import Futures from './pages/futures/Futures';
+import Landing from './pages/landing/Landing';
+import CmsPage from './pages/cms/CmsPage';
 
 const hasValidToken = () => {
   try {
@@ -50,13 +52,16 @@ export default function App() {
     <div className={theme}>
       <BrowserRouter>
         <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/auth/google/success" element={<GoogleSuccess />} />
+          {/* ── Public routes ─── */}
+          <Route path="/"        element={<Landing />} />
+          <Route path="/pages/:slug" element={<CmsPage />} />
+          <Route path="/login"   element={<Login />} />
           <Route path="/register" element={<Register />} />
-          <Route path="/scanner"  element={<PrivateRoute><Scanner /></PrivateRoute>} />
+          <Route path="/auth/google/success" element={<GoogleSuccess />} />
+          <Route path="/scanner" element={<PrivateRoute><Scanner /></PrivateRoute>} />
 
+          {/* ── Private routes ─── */}
           <Route path="/" element={<PrivateRoute><MainLayout /></PrivateRoute>}>
-            <Route index element={<Navigate to="/home" />} />
             <Route path="home"          element={<Home />} />
             <Route path="markets"       element={<Markets />} />
             <Route path="trade"         element={<Trade />} />
@@ -69,18 +74,19 @@ export default function App() {
             <Route path="referral"      element={<Referral />} />
             <Route path="kyc"           element={<KYC />} />
             <Route path="listing"       element={<ListingApply />} />
-            <Route path="security" element={<Security />} />
-            <Route path="edit-profile" element={<EditProfile />} />
-            <Route path="2fa" element={<TwoFA />} />
+            <Route path="security"      element={<Security />} />
+            <Route path="edit-profile"  element={<EditProfile />} />
+            <Route path="2fa"           element={<TwoFA />} />
             <Route path="chart/:symbol" element={<Chart />} />
-            <Route path="orders" element={<Orders />} />
-            <Route path="futures" element={<Futures />} />
+            <Route path="orders"        element={<Orders />} />
+            <Route path="futures"       element={<Futures />} />
             <Route path="futures/:symbol" element={<Futures />} />
             <Route path="deposit-history" element={<DepositHistory />} />
             <Route path="deposit-detail/:id" element={<DepositDetail />} />
             <Route path="support"       element={<Support />} />
           </Route>
-          <Route path="*" element={<Navigate to="/home" />} />
+
+          <Route path="*" element={<Navigate to="/" />} />
         </Routes>
       </BrowserRouter>
       <Toaster position="top-right" toastOptions={{
