@@ -122,3 +122,11 @@ export const twoFAAPI = {
   loginVerify: (temp_token: string, otp_token: string) =>
     api.post('/2fa/login-verify', { temp_token, otp_token }),
 };
+
+// OTP APIs
+export const otpAPI = {
+  check:  (identifier: string) => api.post('/auth/check', { identifier }),
+  send:   (identifier: string, type = 'login') => api.post('/auth/otp/send', { identifier, type }),
+  verify: (identifier: string, code: string, type = 'login') =>
+    api.post('/auth/otp/verify', { identifier, code, type }),
+};
