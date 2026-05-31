@@ -18,11 +18,45 @@ const sendEmailSafe = async (fn, ...args) => {
   }
 };
 
+// ── Phase 1: Coin withdraw control check ──────────
+const checkWithdrawAllowed = async (coinSymbol) => {
+  const res = await db.query(`
+    SELECT is_withdraw, maintenance_mode,
+           withdraw_disabled_reason, withdraw_notice,
+           withdraw_enabled_at
+    FROM coins WHERE symbol = $1 AND is_active = true
+  `, [coinSymbol.toUpperCase()]);
+
+  if (!res.rows[0]) return { allowed: false, reason: 'Coin not found' };
+  const c = res.rows[0];
+
+  // 1. Maintenance check
+  if (c.maintenance_mode) {
+    return { allowed: false, reason: c.withdraw_notice || `${coinSymbol} is under maintenance` };
+  }
+  // 2. Withdraw enabled check
+  if (!c.is_withdraw) {
+    return { allowed: false, reason: c.withdraw_disabled_reason || `Withdrawals disabled for ${coinSymbol}` };
+  }
+  // 3. Scheduled withdraw check
+  if (c.withdraw_enabled_at && new Date(c.withdraw_enabled_at) > new Date()) {
+    return { allowed: false, reason: c.withdraw_notice || `Withdrawals for ${coinSymbol} will be available at ${new Date(c.withdraw_enabled_at).toUTCString()}` };
+  }
+
+  return { allowed: true };
+};
+// ── End Phase 1 ───────────────────────────────────
+
 // Get withdrawal settings + balance for a coin
 const getWithdrawInfo = async (req, res) => {
   try {
     const { coin } = req.query;
     if (!coin) return error(res, 'coin required');
+
+    // ── Phase 1 check ─────────────────────────────
+    const check = await checkWithdrawAllowed(coin);
+    if (!check.allowed) return error(res, check.reason);
+    // ── End check ─────────────────────────────────
 
     const result = await db.query(`
       SELECT c.id, c.symbol, c.name, c.logo_url, c.decimals,
@@ -42,7 +76,7 @@ const getWithdrawInfo = async (req, res) => {
     if (!result.rows[0]) return error(res, 'Coin not found');
     const info = result.rows[0];
 
-    if (!info.is_withdraw || !info.is_enabled)
+    if (!info.is_enabled)
       return error(res, 'Withdrawals disabled for this coin');
 
     return success(res, {
@@ -81,6 +115,14 @@ const requestWithdrawal = async (req, res) => {
     if (!ethers.utils.isAddress(address))
       return error(res, 'Invalid wallet address');
 
+    // ── Phase 1 check ─────────────────────────────
+    const check = await checkWithdrawAllowed(coin);
+    if (!check.allowed) {
+      await client.query('ROLLBACK');
+      return error(res, check.reason);
+    }
+    // ── End check ─────────────────────────────────
+
     const coinData = await client.query(`
       SELECT c.id as coin_id, c.symbol, c.decimals, c.contract_address,
              c.is_withdraw, n.id as network_id, n.short_name as network_name,
@@ -103,11 +145,11 @@ const requestWithdrawal = async (req, res) => {
     if (amt > parseFloat(c.max_amount))
       return error(res, `Max withdrawal: ${c.max_amount} ${coin}`);
 
-    const feeFixed = parseFloat(c.fee_fixed || 0);
+    const feeFixed   = parseFloat(c.fee_fixed || 0);
     const feePercent = parseFloat(c.fee_percent || 0);
-    const fee = feeFixed + (amt * feePercent / 100);
+    const fee        = feeFixed + (amt * feePercent / 100);
     const totalDeduct = amt + fee;
-    const receiveAmt = amt;
+    const receiveAmt  = amt;
 
     const balance = await client.query(`
       SELECT available FROM balances
@@ -126,7 +168,7 @@ const requestWithdrawal = async (req, res) => {
 
     const autoApproveLimit = parseFloat(c.auto_approve_limit || 100);
     const status = amt <= autoApproveLimit ? 'processing' : 'pending';
-    const txId = 'WD' + Date.now() + Math.random().toString(36).substr(2,6).toUpperCase();
+    const txId   = 'WD' + Date.now() + Math.random().toString(36).substr(2,6).toUpperCase();
 
     const withdrawal = await client.query(`
       INSERT INTO withdrawals
@@ -148,7 +190,7 @@ const requestWithdrawal = async (req, res) => {
 
     await client.query('COMMIT');
 
-    // Withdrawal request email - safe async
+    // Email - safe async (existing)
     db.query('SELECT email FROM users WHERE id = $1', [req.user.id])
       .then(u => {
         if (u.rows[0]) {
@@ -161,7 +203,7 @@ const requestWithdrawal = async (req, res) => {
         }
       }).catch(() => {});
 
-    // Auto process if below limit
+    // Auto process (existing)
     if (status === 'processing') {
       processWithdrawal(withdrawal.rows[0].id).catch(err => {
         console.error('Auto process error:', err.message);
@@ -185,7 +227,7 @@ const requestWithdrawal = async (req, res) => {
   }
 };
 
-// Process withdrawal on blockchain
+// Process withdrawal on blockchain (existing - unchanged)
 const processWithdrawal = async (withdrawalId) => {
   const client = await db.pool.connect();
   try {
@@ -210,7 +252,7 @@ const processWithdrawal = async (withdrawalId) => {
     if (!privateKey) throw new Error('WITHDRAW_WALLET_PRIVATE_KEY not set');
 
     const provider = new ethers.providers.JsonRpcProvider(w.rpc_url);
-    const wallet = new ethers.Wallet(privateKey, provider);
+    const wallet   = new ethers.Wallet(privateKey, provider);
     let txHash;
 
     if (w.contract_address) {
@@ -233,10 +275,8 @@ const processWithdrawal = async (withdrawalId) => {
     `, [txHash, withdrawalId]);
 
     await client.query('COMMIT');
-
     console.log(`✅ WITHDRAWAL: ${w.receive_amount} ${w.symbol} → ${w.to_address} | TX: ${txHash}`);
 
-    // Withdrawal completed email - safe async
     db.query('SELECT email FROM users WHERE id = $1', [w.user_id])
       .then(u => {
         if (u.rows[0]) {
@@ -257,7 +297,7 @@ const processWithdrawal = async (withdrawalId) => {
   }
 };
 
-// Get withdrawal history
+// Get withdrawal history (existing - unchanged)
 const getWithdrawalHistory = async (req, res) => {
   try {
     const history = await db.query(`
@@ -276,7 +316,7 @@ const getWithdrawalHistory = async (req, res) => {
   }
 };
 
-// Admin: approve withdrawal
+// Admin: approve withdrawal (existing - unchanged)
 const adminApproveWithdrawal = async (req, res) => {
   try {
     const { withdrawal_id } = req.params;
@@ -300,7 +340,7 @@ const adminApproveWithdrawal = async (req, res) => {
   }
 };
 
-// Admin: reject withdrawal (refund)
+// Admin: reject withdrawal (existing - unchanged)
 const adminRejectWithdrawal = async (req, res) => {
   const client = await db.pool.connect();
   try {
@@ -330,7 +370,6 @@ const adminRejectWithdrawal = async (req, res) => {
 
     await client.query('COMMIT');
 
-    // Rejection email - safe async
     db.query('SELECT email FROM users WHERE id = $1', [w.user_id])
       .then(u => {
         if (u.rows[0]) {

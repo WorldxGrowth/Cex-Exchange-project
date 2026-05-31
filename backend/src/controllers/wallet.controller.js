@@ -5,17 +5,54 @@ const crypto = require('crypto');
 const { encrypt, decrypt } = require('../utils/helpers');
 
 // HD Wallet - deterministic address generation
-// Format: master_seed + user_id + coin_id = unique address
 const generateDepositAddress = (userId, coinSymbol, networkChainId) => {
   const seed = process.env.ENCRYPTION_KEY + userId + coinSymbol + networkChainId;
   const hash = crypto.createHash('sha256').update(seed).digest('hex');
-  
-  // EVM compatible address (ETH, BSC, VDChain)
   const evmAddress = '0x' + hash.slice(0, 40);
   return evmAddress;
 };
 
-// GET all balances
+// ── Phase 1: Coin controls helper ─────────────────
+const checkCoinOperation = async (coinSymbol, operation) => {
+  // operation: 'deposit' | 'withdraw' | 'trade'
+  const res = await db.query(`
+    SELECT symbol, maintenance_mode,
+           is_deposit, is_withdraw, is_tradeable,
+           deposit_disabled_reason, withdraw_disabled_reason, trade_disabled_reason,
+           deposit_notice, withdraw_notice, trade_notice,
+           deposit_enabled_at, withdraw_enabled_at, trade_enabled_at
+    FROM coins WHERE symbol = $1 AND is_active = true
+  `, [coinSymbol.toUpperCase()]);
+
+  if (!res.rows[0]) return { allowed: false, reason: 'Coin not found' };
+  const c = res.rows[0];
+
+  // 1. Maintenance check (blocks all operations)
+  if (c.maintenance_mode) {
+    const notice = c[`${operation}_notice`] || `${coinSymbol} is under maintenance. Please try later.`;
+    return { allowed: false, reason: notice };
+  }
+
+  // 2. Operation enabled check
+  const enabledMap = { deposit: c.is_deposit, withdraw: c.is_withdraw, trade: c.is_tradeable };
+  if (!enabledMap[operation]) {
+    const reason = c[`${operation}_disabled_reason`] || `${operation} disabled for ${coinSymbol}`;
+    return { allowed: false, reason };
+  }
+
+  // 3. Scheduled future check
+  const scheduledAt = c[`${operation}_enabled_at`];
+  if (scheduledAt && new Date(scheduledAt) > new Date()) {
+    const notice = c[`${operation}_notice`] ||
+      `${coinSymbol} ${operation} will be available at ${new Date(scheduledAt).toUTCString()}`;
+    return { allowed: false, reason: notice };
+  }
+
+  return { allowed: true };
+};
+// ── End Phase 1 helper ────────────────────────────
+
+// GET all balances (existing - unchanged)
 const getBalances = async (req, res) => {
   try {
     const { account_type = 'all' } = req.query;
@@ -41,8 +78,6 @@ const getBalances = async (req, res) => {
     query += ` ORDER BY total_usdt_value DESC`;
 
     const balances = await db.query(query, params);
-
-    // Total portfolio value
     const totalUSDT = balances.rows.reduce((sum, b) => {
       return sum + parseFloat(b.total_usdt_value || 0);
     }, 0);
@@ -57,13 +92,18 @@ const getBalances = async (req, res) => {
   }
 };
 
-// GET deposit address for a coin
+// GET deposit address (Phase 1 check added)
 const getDepositAddress = async (req, res) => {
   try {
     const { coin } = req.params;
     const { network } = req.query;
 
-    // Get coin info
+    // ── Phase 1: Deposit control check ───────────
+    const check = await checkCoinOperation(coin, 'deposit');
+    if (!check.allowed) return error(res, check.reason);
+    // ── End check ─────────────────────────────────
+
+    // Get coin info (existing - unchanged)
     const coinData = await db.query(`
       SELECT c.*, n.chain_id, n.name as network_name, n.short_name as network_short,
              n.explorer_url
@@ -78,21 +118,16 @@ const getDepositAddress = async (req, res) => {
 
     const coinInfo = coinData.rows[0];
 
-    // Check if address already exists
     let wallet = await db.query(`
       SELECT address FROM user_wallets
       WHERE user_id = $1 AND coin_id = $2
     `, [req.user.id, coinInfo.id]);
 
     let address;
-
     if (wallet.rows.length > 0) {
       address = wallet.rows[0].address;
     } else {
-      // Generate new address
       address = generateDepositAddress(req.user.id, coinInfo.symbol, coinInfo.chain_id);
-
-      // Save to DB
       await db.query(`
         INSERT INTO user_wallets (user_id, coin_id, network_id, address)
         VALUES ($1, $2, $3, $4)
@@ -118,7 +153,7 @@ const getDepositAddress = async (req, res) => {
   }
 };
 
-// GET deposit history
+// GET deposit history (existing - unchanged)
 const getDepositHistory = async (req, res) => {
   try {
     const { page = 1, limit = 20, status, coin } = req.query;
@@ -150,14 +185,17 @@ const getDepositHistory = async (req, res) => {
 
     return success(res, {
       deposits: deposits.rows,
-      pagination: { page: parseInt(page), limit: parseInt(limit), total: parseInt(total.rows[0].count) }
+      pagination: {
+        page: parseInt(page), limit: parseInt(limit),
+        total: parseInt(total.rows[0].count)
+      }
     });
   } catch (err) {
     return error(res, 'Failed to get deposit history', 500);
   }
 };
 
-// SUBMIT withdrawal request
+// SUBMIT withdrawal (Phase 1 check added)
 const submitWithdrawal = async (req, res) => {
   try {
     const { coin, network, to_address, amount, fund_password } = req.body;
@@ -166,7 +204,12 @@ const submitWithdrawal = async (req, res) => {
       return error(res, 'coin, to_address and amount required');
     }
 
-    // Get coin info
+    // ── Phase 1: Withdraw control check ──────────
+    const check = await checkCoinOperation(coin, 'withdraw');
+    if (!check.allowed) return error(res, check.reason);
+    // ── End check ─────────────────────────────────
+
+    // Get coin info (existing - unchanged)
     const coinData = await db.query(`
       SELECT c.*, n.id as net_id, n.short_name as network_short
       FROM coins c
@@ -189,7 +232,7 @@ const submitWithdrawal = async (req, res) => {
       return error(res, 'Amount too small after fee deduction');
     }
 
-    // Check balance
+    // Check balance (existing - unchanged)
     const balance = await db.query(`
       SELECT available FROM balances
       WHERE user_id = $1 AND coin_id = $2 AND account_type = 'spot'
@@ -200,7 +243,7 @@ const submitWithdrawal = async (req, res) => {
       return error(res, `Insufficient balance. Available: ${available} ${coin}`);
     }
 
-    // Verify fund password if set
+    // Fund password check (existing - unchanged)
     const user = await db.query('SELECT fund_password FROM users WHERE id = $1', [req.user.id]);
     if (user.rows[0].fund_password) {
       if (!fund_password) return error(res, 'Fund password required');
@@ -209,14 +252,14 @@ const submitWithdrawal = async (req, res) => {
       if (!valid) return error(res, 'Invalid fund password');
     }
 
-    // Lock balance
+    // Lock balance (existing - unchanged)
     await db.query(`
       UPDATE balances
       SET available = available - $1, locked = locked + $1
       WHERE user_id = $2 AND coin_id = $3 AND account_type = 'spot'
     `, [withdrawAmount, req.user.id, coinInfo.id]);
 
-    // Create withdrawal record
+    // Create withdrawal record (existing - unchanged)
     const withdrawal = await db.query(`
       INSERT INTO withdrawals
         (user_id, coin_id, network_id, to_address, amount, fee, amount_received, status, ip_address)
@@ -238,7 +281,7 @@ const submitWithdrawal = async (req, res) => {
   }
 };
 
-// GET withdrawal history
+// GET withdrawal history (existing - unchanged)
 const getWithdrawalHistory = async (req, res) => {
   try {
     const { page = 1, limit = 20 } = req.query;
@@ -263,7 +306,7 @@ const getWithdrawalHistory = async (req, res) => {
   }
 };
 
-// INTERNAL transfer (spot ↔ futures ↔ earn)
+// INTERNAL transfer (existing - unchanged)
 const internalTransfer = async (req, res) => {
   try {
     const { coin, from_account, to_account, amount } = req.body;
@@ -282,7 +325,6 @@ const internalTransfer = async (req, res) => {
     const coinId = coinData.rows[0].id;
     const transferAmount = parseFloat(amount);
 
-    // Check balance
     const fromBalance = await db.query(`
       SELECT available FROM balances
       WHERE user_id = $1 AND coin_id = $2 AND account_type = $3
@@ -293,13 +335,11 @@ const internalTransfer = async (req, res) => {
       return error(res, `Insufficient ${from_account} balance`);
     }
 
-    // Deduct from source
     await db.query(`
       UPDATE balances SET available = available - $1
       WHERE user_id = $2 AND coin_id = $3 AND account_type = $4
     `, [transferAmount, req.user.id, coinId, from_account]);
 
-    // Add to destination (create if not exists)
     await db.query(`
       INSERT INTO balances (user_id, coin_id, account_type, available)
       VALUES ($1, $2, $3, $4)
@@ -307,7 +347,6 @@ const internalTransfer = async (req, res) => {
       DO UPDATE SET available = balances.available + $4
     `, [req.user.id, coinId, to_account, transferAmount]);
 
-    // Log transfer
     await db.query(`
       INSERT INTO transfers (user_id, coin_id, from_account, to_account, amount, status)
       VALUES ($1, $2, $3, $4, $5, 'completed')
@@ -320,7 +359,7 @@ const internalTransfer = async (req, res) => {
   }
 };
 
-// GET transaction history (deposits + withdrawals combined)
+// GET transaction history (existing - unchanged)
 const getTransactionHistory = async (req, res) => {
   try {
     const { page = 1, limit = 20, type } = req.query;
@@ -352,7 +391,6 @@ const getTransactionHistory = async (req, res) => {
       rows = [...rows, ...withdrawals.rows];
     }
 
-    // Sort by date
     rows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
     const paginated = rows.slice(offset, offset + parseInt(limit));
 

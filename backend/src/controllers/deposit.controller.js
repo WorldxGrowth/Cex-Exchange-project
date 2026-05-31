@@ -15,12 +15,37 @@ const getDepositAddress = async (req, res) => {
 
     if (!NETWORK_INFO[network]) return error(res, 'Invalid network');
 
-    // Address generate/fetch
+    // ── Phase 1: Coin deposit controls ────────────
+    const coinCheck = await db.query(`
+      SELECT id, symbol, name, logo_url,
+             is_deposit, maintenance_mode,
+             deposit_disabled_reason, deposit_notice,
+             deposit_enabled_at, min_deposit
+      FROM coins WHERE symbol = $1 AND is_active = true
+    `, [coin]);
+
+    if (coinCheck.rows[0]) {
+      const c = coinCheck.rows[0];
+
+      // 1. Maintenance check
+      if (c.maintenance_mode) {
+        return error(res, c.deposit_notice || `${coin} is under maintenance. Please try later.`);
+      }
+      // 2. Deposit enabled check
+      if (!c.is_deposit) {
+        return error(res, c.deposit_disabled_reason || `Deposits are disabled for ${coin}`);
+      }
+      // 3. Scheduled deposit check (future date)
+      if (c.deposit_enabled_at && new Date(c.deposit_enabled_at) > new Date()) {
+        return error(res, c.deposit_notice || `Deposits for ${coin} will be available at ${new Date(c.deposit_enabled_at).toUTCString()}`);
+      }
+    }
+    // ── End Phase 1 ───────────────────────────────
+
+    // Address generate/fetch (existing logic - unchanged)
     const address = await hdWallet.getOrCreateDepositAddress(req.user.id, network);
 
-    // ── Webhook mein register karo (non-blocking) ──
-    // BSC/ETH → Alchemy
-    // VDCHAIN → VDNotify
+    // Webhook register (existing logic - unchanged)
     setImmediate(async () => {
       try {
         const alchemyService = require('../services/alchemyService');
@@ -41,16 +66,14 @@ const getDepositAddress = async (req, res) => {
       }
     });
 
-    const coinInfo = await db.query(
-      'SELECT id, symbol, name, logo_url FROM coins WHERE symbol = $1', [coin]
-    );
+    const coinInfo = coinCheck.rows[0] || null;
 
     return success(res, {
       address,
       network,
       network_info: NETWORK_INFO[network],
-      coin: coinInfo.rows[0] || { symbol: coin },
-      min_deposit: '1',
+      coin: coinInfo || { symbol: coin },
+      min_deposit: coinInfo?.min_deposit || '1',
       confirmations_required: network === 'ETH' ? 12 : 3,
       warning: `Only send ${coin} on ${network} network!`
     });
@@ -65,7 +88,6 @@ const getDepositHistory = async (req, res) => {
   try {
     const limit  = req.query.limit  || 20;
     const offset = req.query.offset || 0;
-
     const deposits = await db.query(`
       SELECT d.*, c.symbol, c.name, c.logo_url,
              n.name as network_name, n.short_name as network,
@@ -77,7 +99,6 @@ const getDepositHistory = async (req, res) => {
       ORDER BY d.created_at DESC
       LIMIT $2 OFFSET $3
     `, [req.user.id, limit, offset]);
-
     return success(res, deposits.rows);
   } catch (err) {
     return error(res, 'Failed', 500);
