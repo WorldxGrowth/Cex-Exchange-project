@@ -14,6 +14,14 @@ import Scanner from './pages/scanner/Scanner';
 import Banners from './pages/banners/Banners';
 import Settings from './pages/settings/Settings';
 import Bots from './pages/bots/Bots';
+import TradingPairs from './pages/trading/TradingPairs';
+import FeeRules from './pages/trading/FeeRules';
+import VipLevels from './pages/trading/VipLevels';
+import Reports from './pages/reports/Reports';
+import BinanceCreds from './pages/trading/BinanceCreds';
+import WithdrawalSettings from './pages/finance/WithdrawalSettings';
+import Networks from './pages/finance/Networks';
+import Announcements from './pages/content/Announcements';
 
 const isAuth = () => !!localStorage.getItem('admin_token');
 const PrivateRoute = ({ children }) =>
@@ -35,22 +43,28 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           <Route path="/login" element={<Login />} />
-          <Route path="/" element={
-            <PrivateRoute><MainLayout /></PrivateRoute>
-          }>
+          <Route path="/" element={<PrivateRoute><MainLayout /></PrivateRoute>}>
             <Route index element={<Navigate to="/dashboard" />} />
-            <Route path="dashboard"    element={<Dashboard />} />
-            <Route path="users"        element={<Users />} />
-            <Route path="users/:id"    element={<UserDetail />} />
-            <Route path="kyc"          element={<KYC />} />
-            <Route path="deposits"     element={<Deposits />} />
-            <Route path="withdrawals"  element={<Withdrawals />} />
-            <Route path="coins"        element={<Coins />} />
-            <Route path="listings"     element={<Listings />} />
-            <Route path="scanner"      element={<Scanner />} />
-            <Route path="banners"      element={<Banners />} />
-            <Route path="settings"     element={<Settings />} />
-            <Route path="bots"         element={<Bots />} />
+            <Route path="dashboard"           element={<Dashboard />} />
+            <Route path="users"               element={<Users />} />
+            <Route path="users/:id"           element={<UserDetail />} />
+            <Route path="kyc"                 element={<KYC />} />
+            <Route path="deposits"            element={<Deposits />} />
+            <Route path="withdrawals"         element={<Withdrawals />} />
+            <Route path="coins"               element={<Coins />} />
+            <Route path="trading/pairs"       element={<TradingPairs />} />
+            <Route path="trading/fees"        element={<FeeRules />} />
+            <Route path="trading/vip"         element={<VipLevels />} />
+            <Route path="trading/binance"     element={<BinanceCreds />} />
+            <Route path="finance/withdrawal-settings" element={<WithdrawalSettings />} />
+            <Route path="finance/networks"    element={<Networks />} />
+            <Route path="content/announcements" element={<Announcements />} />
+            <Route path="reports"             element={<Reports />} />
+            <Route path="listings"            element={<Listings />} />
+            <Route path="scanner"             element={<Scanner />} />
+            <Route path="banners"             element={<Banners />} />
+            <Route path="bots"                element={<Bots />} />
+            <Route path="settings"            element={<Settings />} />
           </Route>
         </Routes>
       </BrowserRouter>

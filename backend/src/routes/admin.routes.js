@@ -102,3 +102,21 @@ router.post('/settings',       addSetting);
 router.use('/bots', require('./bot.routes'));
 
 module.exports = router;
+
+// ── Withdrawal Settings ───────────────────────
+const { getWithdrawalSettings, updateWithdrawalSetting,
+        getNetworks, updateNetwork,
+        getAnnouncements, updateAnnouncement, deleteAnnouncement
+} = require('../controllers/admin.controller');
+
+router.get('/withdrawal-settings',        getWithdrawalSettings);
+router.put('/withdrawal-settings/:id',    updateWithdrawalSetting);
+
+// ── Networks ─────────────────────────────────
+router.get('/networks',        getNetworks);
+router.put('/networks/:id',    updateNetwork);
+
+// ── Announcements ─────────────────────────────
+router.get('/announcements',           getAnnouncements);
+router.put('/announcements/:id',       updateAnnouncement);
+router.delete('/announcements/:id',    deleteAnnouncement);

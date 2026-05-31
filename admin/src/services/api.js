@@ -5,14 +5,12 @@ const api = axios.create({
   timeout: 30000,
 });
 
-// Auto attach token
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('admin_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
 
-// Auto logout on 401
 api.interceptors.response.use(
   (res) => res.data,
   (err) => {
@@ -34,6 +32,16 @@ export const adminAPI = {
   // Users
   getUsers: (params) => api.get('/admin/users', { params }),
   updateUserStatus: (id, data) => api.put(`/admin/users/${id}/status`, data),
+  updateUserVip: (id, data) => api.put(`/admin/users/${id}/vip`, data),
+  getUserDetail: (id) => api.get(`/admin/users/${id}`),
+  getUserBalances: (id) => api.get(`/admin/users/${id}/balances`),
+  getUserDeposits: (id) => api.get(`/admin/users/${id}/deposits`),
+  getUserWithdrawals: (id) => api.get(`/admin/users/${id}/withdrawals`),
+  getUserLedger: (id) => api.get(`/admin/users/${id}/ledger`),
+  adjustBalance: (userId, data) => api.post(`/admin/users/${userId}/balance`, data),
+
+  // KYC
+  getKYCList: (params) => api.get('/admin/kyc', { params }),
   approveKYC: (kycId, data) => api.put(`/admin/kyc/${kycId}`, data),
 
   // Coins
@@ -42,11 +50,35 @@ export const adminAPI = {
   updateCoin: (id, data) => api.put(`/admin/coins/${id}`, data),
 
   // Trading Pairs
+  getPairs: () => api.get('/admin/pairs'),
   addPair: (data) => api.post('/admin/pairs', data),
+  updatePair: (id, data) => api.put(`/admin/pairs/${id}`, data),
+
+  // Fee Rules
+  getFeeRules: (params) => api.get('/admin/fee-rules', { params }),
+  addFeeRule: (data) => api.post('/admin/fee-rules', data),
+  updateFeeRule: (id, data) => api.put(`/admin/fee-rules/${id}`, data),
+  deleteFeeRule: (id) => api.delete(`/admin/fee-rules/${id}`),
+
+  // VIP Levels
+  getVipLevels: () => api.get('/admin/vip-levels'),
+  updateVipLevel: (level, data) => api.put(`/admin/vip-levels/${level}`, data),
+
+  // Reports
+  getTreasuryReport: (params) => api.get('/admin/reports/treasury', { params }),
+  getVolumeReport: (params) => api.get('/admin/reports/volume', { params }),
+
+  // Binance Credentials
+  getBinanceCreds: () => api.get('/admin/binance-credentials'),
+  updateBinanceCred: (id, data) => api.put(`/admin/binance-credentials/${id}`, data),
 
   // Withdrawals
   getPendingWithdrawals: () => api.get('/admin/withdrawals/pending'),
+  getWithdrawals: (params) => api.get('/admin/withdrawals', { params }),
   processWithdrawal: (id, data) => api.put(`/admin/withdrawals/${id}`, data),
+
+  // Deposits
+  getDeposits: (params) => api.get('/admin/deposits', { params }),
 
   // Listings
   getListings: (params) => api.get('/admin/listings', { params }),
@@ -55,34 +87,18 @@ export const adminAPI = {
   // Settings
   getSettings: () => api.get('/admin/settings'),
   updateSetting: (key, data) => api.put(`/admin/settings/${key}`, data),
+  addSetting: (data) => api.post('/admin/settings', data),
 
   // Content
   addBanner: (data) => api.post('/admin/banners', data),
   addPopup: (data) => api.post('/admin/popups', data),
   addAnnouncement: (data) => api.post('/admin/announcements', data),
-
-  // Market (public)
-  getPairs: () => api.get('/market/pairs'),
-};
-
-export default api;
-// Extended API methods
-Object.assign(adminAPI, {
-  getKYCList: (params) => api.get('/admin/kyc', { params }),
-  getDeposits: (params) => api.get('/admin/deposits', { params }),
-  getWithdrawals: (params) => api.get('/admin/withdrawals', { params }),
-  getScannerState: () => api.get('/admin/scanner/state'),
   getBanners: () => api.get('/admin/banners'),
-  adjustBalance: (userId, data) => api.post(`/admin/users/${userId}/balance`, data),
-  getUserDetail: (id) => api.get(`/admin/users/${id}`),
-  getUserBalances: (id) => api.get(`/admin/users/${id}/balances`),
-  getUserDeposits: (id) => api.get(`/admin/users/${id}/deposits`),
-  getUserWithdrawals: (id) => api.get(`/admin/users/${id}/withdrawals`),
-  getUserLedger: (id) => api.get(`/admin/users/${id}/ledger`),
-});
 
-// Bot Management APIs
-Object.assign(adminAPI, {
+  // Scanner
+  getScannerState: () => api.get('/admin/scanner/state'),
+
+  // Bot Management
   getBots: () => api.get('/admin/bots'),
   getBotStats: () => api.get('/admin/bots/stats/overview'),
   getBot: (id) => api.get(`/admin/bots/${id}`),
@@ -95,4 +111,18 @@ Object.assign(adminAPI, {
   getBotOrders: (id, params) => api.get(`/admin/bots/${id}/orders`, { params }),
   getBotTrades: (id) => api.get(`/admin/bots/${id}/trades`),
   placeBotManualOrder: (id, data) => api.post(`/admin/bots/${id}/manual-order`, data),
+};
+
+export default api;
+
+// New APIs
+Object.assign(adminAPI, {
+  getWithdrawalSettings: () => api.get('/admin/withdrawal-settings'),
+  updateWithdrawalSetting: (id, data) => api.put(`/admin/withdrawal-settings/${id}`, data),
+  getNetworks: () => api.get('/admin/networks'),
+  updateNetwork: (id, data) => api.put(`/admin/networks/${id}`, data),
+  getAnnouncements: () => api.get('/admin/announcements'),
+  addAnnouncement: (data) => api.post('/admin/announcements', data),
+  updateAnnouncement: (id, data) => api.put(`/admin/announcements/${id}`, data),
+  deleteAnnouncement: (id) => api.delete(`/admin/announcements/${id}`),
 });

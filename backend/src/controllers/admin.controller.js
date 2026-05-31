@@ -1017,3 +1017,119 @@ module.exports = {
   getDeposits, getWithdrawals, getScannerState, getKYCList,
   getBannersAdmin,
 };
+// ================================
+// WITHDRAWAL SETTINGS (NEW)
+// ================================
+const getWithdrawalSettings = async (req, res) => {
+  try {
+    const settings = await db.query(`
+      SELECT ws.*, c.symbol, c.name, c.logo_url
+      FROM withdrawal_settings ws
+      JOIN coins c ON c.id = ws.coin_id
+      ORDER BY c.symbol
+    `);
+    return success(res, settings.rows);
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+const updateWithdrawalSetting = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { min_amount, max_amount, fee_fixed, fee_percent,
+            auto_approve_limit, is_enabled, low_balance_alert } = req.body;
+
+    const updates = [];
+    const values = [];
+    let i = 1;
+
+    if (min_amount !== undefined)       { updates.push(`min_amount=$${i++}`);       values.push(min_amount); }
+    if (max_amount !== undefined)       { updates.push(`max_amount=$${i++}`);       values.push(max_amount); }
+    if (fee_fixed !== undefined)        { updates.push(`fee_fixed=$${i++}`);        values.push(fee_fixed); }
+    if (fee_percent !== undefined)      { updates.push(`fee_percent=$${i++}`);      values.push(fee_percent); }
+    if (auto_approve_limit !== undefined){ updates.push(`auto_approve_limit=$${i++}`); values.push(auto_approve_limit); }
+    if (is_enabled !== undefined)       { updates.push(`is_enabled=$${i++}`);       values.push(is_enabled); }
+    if (low_balance_alert !== undefined){ updates.push(`low_balance_alert=$${i++}`); values.push(low_balance_alert); }
+
+    if (updates.length === 0) return error(res, 'No fields');
+    updates.push(`updated_at=NOW()`);
+    values.push(id);
+
+    await db.query(`UPDATE withdrawal_settings SET ${updates.join(',')} WHERE id=$${i}`, values);
+    return success(res, {}, 'Updated');
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+// ================================
+// NETWORKS MANAGEMENT (NEW)
+// ================================
+const getNetworks = async (req, res) => {
+  try {
+    const networks = await db.query('SELECT * FROM networks ORDER BY id');
+    return success(res, networks.rows);
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+const updateNetwork = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { name, rpc_url, explorer_url, is_active } = req.body;
+
+    const updates = [];
+    const values = [];
+    let i = 1;
+
+    if (name !== undefined)         { updates.push(`name=$${i++}`);         values.push(name); }
+    if (rpc_url !== undefined)      { updates.push(`rpc_url=$${i++}`);      values.push(rpc_url); }
+    if (explorer_url !== undefined) { updates.push(`explorer_url=$${i++}`); values.push(explorer_url); }
+    if (is_active !== undefined)    { updates.push(`is_active=$${i++}`);    values.push(is_active); }
+
+    if (updates.length === 0) return error(res, 'No fields');
+    values.push(id);
+
+    const result = await db.query(
+      `UPDATE networks SET ${updates.join(',')} WHERE id=$${i} RETURNING *`, values
+    );
+    return success(res, result.rows[0], 'Network updated');
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+// ================================
+// ANNOUNCEMENTS (NEW)
+// ================================
+const getAnnouncements = async (req, res) => {
+  try {
+    const anns = await db.query(`
+      SELECT a.*, au.email as created_by_email
+      FROM announcements a
+      LEFT JOIN admin_users au ON au.id = a.created_by
+      ORDER BY a.created_at DESC
+    `);
+    return success(res, anns.rows);
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+const updateAnnouncement = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { is_published, expires_at } = req.body;
+    await db.query(
+      'UPDATE announcements SET is_published=$1, expires_at=$2 WHERE id=$3',
+      [is_published, expires_at, id]
+    );
+    return success(res, {}, 'Updated');
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+const deleteAnnouncement = async (req, res) => {
+  try {
+    await db.query('DELETE FROM announcements WHERE id=$1', [req.params.id]);
+    return success(res, {}, 'Deleted');
+  } catch (err) { return error(res, 'Failed', 500); }
+};
+
+// Export new functions
+module.exports = Object.assign(module.exports, {
+  getWithdrawalSettings, updateWithdrawalSetting,
+  getNetworks, updateNetwork,
+  getAnnouncements, updateAnnouncement, deleteAnnouncement,
+});
