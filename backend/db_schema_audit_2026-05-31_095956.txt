@@ -1,0 +1,24 @@
+=== ALL TABLES COUNT ===
+psql: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "vdexchange_user"
+connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "vdexchange_user"
+=== ALL TABLES ===
+psql: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "vdexchange_user"
+connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "vdexchange_user"
+=== ALL TABLE COLUMNS ===
+psql: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "vdexchange_user"
+connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "vdexchange_user"
+=== IMPORTANT SETTINGS ===
+psql: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "vdexchange_user"
+connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "vdexchange_user"
+=== COINS CURRENT CONFIG ===
+psql: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "vdexchange_user"
+connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "vdexchange_user"
+=== TRADING PAIRS CURRENT CONFIG ===
+psql: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "vdexchange_user"
+connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "vdexchange_user"
+=== VIP LEVELS ===
+psql: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "vdexchange_user"
+connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "vdexchange_user"
+=== FEE RULES ===
+psql: error: connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "vdexchange_user"
+connection to server at "127.0.0.1", port 5432 failed: FATAL:  password authentication failed for user "vdexchange_user"
