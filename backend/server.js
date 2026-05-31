@@ -113,3 +113,10 @@ sweepService.start();
 console.log('🧹 SweepService loaded');
 
 module.exports = { app, server };
+
+// ── Reconcile Job (every 5 min) ────────────────────
+const reconcileService = require('./src/services/trading/reconcile');
+setInterval(() => {
+  reconcileService.run().catch(console.error);
+}, 5 * 60 * 1000);
+console.log('🔄 ReconcileService loaded');

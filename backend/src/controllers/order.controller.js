@@ -28,12 +28,13 @@ const placeOrder = async (req, res) => {
     if (order_type === 'limit' && (!limitPrice || isNaN(limitPrice) || limitPrice <= 0))
       return error(res, 'Valid price required for limit order');
 
-    // Get pair info
+    // Get pair info — is_custom + binance_symbol bhi chahiye
     const pairInfo = await client.query(`
       SELECT tp.id, tp.symbol, tp.base_coin_id, tp.quote_coin_id,
              cb.symbol as base_symbol, cq.symbol as quote_symbol,
              tp.min_order_qty, tp.max_order_qty,
-             tp.price_precision, tp.qty_precision
+             tp.price_precision, tp.qty_precision,
+             tp.is_custom, tp.binance_symbol
       FROM trading_pairs tp
       JOIN coins cb ON cb.id = tp.base_coin_id
       JOIN coins cq ON cq.id = tp.quote_coin_id
@@ -43,6 +44,17 @@ const placeOrder = async (req, res) => {
     if (!pairInfo.rows[0]) return error(res, 'Trading pair not found or inactive');
     const pair = pairInfo.rows[0];
 
+    // Binance trading enabled check (non-custom pairs ke liye)
+    if (!pair.is_custom) {
+      const settingRes = await client.query(
+        "SELECT value FROM system_settings WHERE key='binance_trading_enabled'"
+      );
+      const binanceEnabled = settingRes.rows[0]?.value === 'true';
+      if (!binanceEnabled) {
+        return error(res, 'Trading temporarily unavailable for this pair');
+      }
+    }
+
     // Get current market price
     const priceData = await client.query(
       'SELECT price_usdt FROM price_feeds WHERE coin_id = $1',
@@ -51,9 +63,6 @@ const placeOrder = async (req, res) => {
     const marketPrice = parseFloat(priceData.rows[0]?.price_usdt || 0);
     if (marketPrice <= 0) return error(res, 'Market price not available');
 
-    // execPrice:
-    //   limit  → use limitPrice
-    //   market → use current marketPrice (stored in DB for matcher)
     const execPrice = order_type === 'market' ? marketPrice : limitPrice;
 
     // Calculate required balance
@@ -62,7 +71,7 @@ const placeOrder = async (req, res) => {
       requiredCoinId = pair.quote_coin_id; // USDT
       requiredAmount = qty * execPrice * 1.001; // 0.1% buffer
     } else {
-      requiredCoinId = pair.base_coin_id; // Base coin
+      requiredCoinId = pair.base_coin_id;
       requiredAmount = qty;
     }
 
@@ -93,7 +102,6 @@ const placeOrder = async (req, res) => {
     `, [requiredAmount, req.user.id, requiredCoinId]);
 
     // Create order record
-    // NOTE: market order stores execPrice (current market price) so matcher can work
     const orderId    = generateOrderId();
     const totalValue = qty * execPrice;
 
@@ -101,12 +109,13 @@ const placeOrder = async (req, res) => {
       INSERT INTO orders
         (order_id, user_id, pair_id, side, order_type,
          price, quantity, remaining_qty, total_value,
-         status, time_in_force, source)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$7,$8,'open',$9,'web')
+         status, time_in_force, source, is_binance_order)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$7,$8,'open',$9,'web',$10)
       RETURNING *
     `, [orderId, req.user.id, pair.id, side, order_type,
-        execPrice,   // market order: stores current price ← KEY FIX
-        qty, totalValue, time_in_force]);
+        execPrice, qty, totalValue, time_in_force,
+        !pair.is_custom  // is_binance_order = true when not custom
+    ]);
 
     // Ledger entry
     await client.query(`
@@ -122,15 +131,28 @@ const placeOrder = async (req, res) => {
 
     await client.query('COMMIT');
 
-    // Instant match for market orders
-    if (order_type === 'market') {
-      setImmediate(() => {
-        try {
+    // ── Route order after commit ──────────────────
+    // is_custom=true  → Internal OrderMatcher (VDC etc)
+    // is_custom=false → Binance Hedge Engine (BTC/ETH etc)
+    setImmediate(() => {
+      try {
+        if (pair.is_custom) {
+          // Internal matching engine
           const matcher = require('../services/orderMatcher');
-          matcher.matchPairNow(pair.id).catch(() => {});
-        } catch (e) {}
-      });
-    }
+          matcher.matchPairNow(pair.id).catch(e =>
+            console.error('[Order] Internal match error:', e.message)
+          );
+        } else {
+          // Binance hedge
+          const tradingRouter = require('../services/trading/router');
+          tradingRouter.routeOrder(orderId, pair.id).catch(e =>
+            console.error('[Order] Binance route error:', e.message)
+          );
+        }
+      } catch (e) {
+        console.error('[Order] Route error:', e.message);
+      }
+    });
 
     return success(res, newOrder.rows[0], 'Order placed successfully');
 
@@ -155,6 +177,7 @@ const cancelOrder = async (req, res) => {
 
     const order = await client.query(`
       SELECT o.*, tp.base_coin_id, tp.quote_coin_id,
+             tp.is_custom, tp.binance_symbol, tp.symbol as pair_symbol,
              cb.symbol as base_symbol
       FROM orders o
       JOIN trading_pairs tp ON tp.id = o.pair_id
@@ -168,6 +191,21 @@ const cancelOrder = async (req, res) => {
     const o = order.rows[0];
     if (!['open','partially_filled'].includes(o.status))
       return error(res, 'Order cannot be cancelled');
+
+    // ── Binance cancel pehle (non-custom pairs) ──
+    if (!o.is_custom && o.is_binance_order) {
+      try {
+        const hedgeEngine = require('../services/trading/hedgeEngine');
+        const cancelResult = await hedgeEngine.cancelHedge(order_id);
+        if (!cancelResult.ok && cancelResult.reason === 'already_filled') {
+          await client.query('ROLLBACK');
+          return error(res, 'Order already filled on exchange');
+        }
+      } catch (e) {
+        console.error('[Cancel] Binance cancel error:', e.message);
+        // Continue with local cancel even if Binance fails
+      }
+    }
 
     const remainingQty = parseFloat(o.remaining_qty || 0);
     const orderPrice   = parseFloat(o.price || 0);
