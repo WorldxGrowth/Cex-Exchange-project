@@ -4,14 +4,36 @@ import BottomNav from './BottomNav';
 
 export default function MainLayout() {
   const location = useLocation();
-  const isTradeePage = location.pathname.startsWith('/trade');
+  const path = location.pathname;
+
+  // Pages jahan header NAHI dikhana
+  const hideHeader =
+    path.startsWith('/trade')      ||
+    path.startsWith('/profile')    ||
+    path.startsWith('/edit-profile') ||
+    path.startsWith('/security')   ||
+    path.startsWith('/kyc')        ||
+    path.startsWith('/referral')   ||
+    path.startsWith('/2fa')        ||
+    path.startsWith('/deposit')    ||
+    path.startsWith('/withdraw')   ||
+    path.startsWith('/transfer')   ||
+    path.startsWith('/assets')     ||
+    path.startsWith('/orders')     ||
+    path.startsWith('/futures')    ||
+    path.startsWith('/listing')    ||
+    path.startsWith('/support')    ||
+    path.startsWith('/notifications') ||
+    path.startsWith('/chart')      ||
+    path.startsWith('/deposit-history') ||
+    path.startsWith('/deposit-detail');
 
   return (
     <div style={{ background: 'var(--color-bg)', minHeight: '100vh' }}>
-      {!isTradeePage && <Header />}
+      {!hideHeader && <Header />}
       <main style={{
         paddingBottom: '60px',
-        paddingTop: isTradeePage ? '0px' : '56px'
+        paddingTop: hideHeader ? '0px' : '56px'
       }}>
         <Outlet />
       </main>
