@@ -2,9 +2,6 @@ const db     = require('../config/database');
 const { success, error } = require('../utils/response');
 const bcrypt = require('bcryptjs');
 
-// ================================
-// GET PROFILE
-// ================================
 const getProfile = async (req, res) => {
   try {
     const user = await db.query(`
@@ -23,14 +20,19 @@ const getProfile = async (req, res) => {
   } catch (err) { return error(res, 'Failed', 500); }
 };
 
-// ================================
-// UPDATE PROFILE
-// ================================
 const updateProfile = async (req, res) => {
   try {
     const { full_name, nationality, address, date_of_birth,
             language, theme, gender, avatar,
-            state, city, pincode } = req.body;
+            state, city, pincode, phone } = req.body;
+
+    // Phone unique check
+    if (phone) {
+      const ex = await db.query(
+        'SELECT id FROM users WHERE phone=$1 AND id!=$2', [phone, req.user.id]
+      );
+      if (ex.rows.length > 0) return error(res, 'Phone already in use');
+    }
 
     await db.query(`
       UPDATE users SET
@@ -45,21 +47,17 @@ const updateProfile = async (req, res) => {
         state         = COALESCE($9,  state),
         city          = COALESCE($10, city),
         pincode       = COALESCE($11, pincode),
+        phone         = COALESCE($13, phone),
         updated_at    = NOW()
       WHERE id = $12
     `, [
-      full_name     || null,
-      nationality   || null,
-      address       || null,
-      date_of_birth || null,
-      language      || null,
-      theme         || null,
-      gender        || null,
-      avatar        || null,
-      state         || null,
-      city          || null,
-      pincode       || null,
-      req.user.id
+      full_name     || null, nationality   || null,
+      address       || null, date_of_birth || null,
+      language      || null, theme         || null,
+      gender        || null, avatar        || null,
+      state         || null, city          || null,
+      pincode       || null, req.user.id,
+      phone         || null
     ]);
 
     return success(res, {}, 'Profile updated');
@@ -69,49 +67,34 @@ const updateProfile = async (req, res) => {
   }
 };
 
-// ================================
-// AVATAR UPLOAD
-// ================================
 const uploadAvatar = async (req, res) => {
   try {
     const { avatar } = req.body;
     if (!avatar) return error(res, 'Avatar required');
-
     const sizeInBytes = Buffer.byteLength(
       avatar.replace(/^data:image\/\w+;base64,/, ''), 'base64'
     );
     if (sizeInBytes > 2 * 1024 * 1024)
       return error(res, 'Image too large. Max 2MB');
-
     await db.query(
       'UPDATE users SET avatar=$1, updated_at=NOW() WHERE id=$2',
       [avatar, req.user.id]
     );
-
     return success(res, { avatar }, 'Avatar updated');
-  } catch (err) {
-    console.error('uploadAvatar error:', err);
-    return error(res, 'Failed', 500);
-  }
+  } catch (err) { return error(res, 'Failed', 500); }
 };
 
-// ================================
-// CHANGE PASSWORD
-// ================================
 const changePassword = async (req, res) => {
   try {
     const { current_password, new_password } = req.body;
     if (!current_password || !new_password)
       return error(res, 'Both passwords required');
-    if (new_password.length < 8)
-      return error(res, 'Min 8 characters');
-
+    if (new_password.length < 8) return error(res, 'Min 8 characters');
     const user = await db.query(
-      'SELECT password_hash FROM users WHERE id = $1', [req.user.id]
+      'SELECT password_hash FROM users WHERE id=$1', [req.user.id]
     );
     const valid = await bcrypt.compare(current_password, user.rows[0].password_hash);
     if (!valid) return error(res, 'Current password incorrect');
-
     const hash = await bcrypt.hash(new_password, 12);
     await db.query(
       'UPDATE users SET password_hash=$1, updated_at=NOW() WHERE id=$2',
@@ -121,9 +104,6 @@ const changePassword = async (req, res) => {
   } catch (err) { return error(res, 'Failed', 500); }
 };
 
-// ================================
-// ANTI-PHISH CODE
-// ================================
 const setAntiPhishCode = async (req, res) => {
   try {
     const { code } = req.body;
@@ -136,31 +116,23 @@ const setAntiPhishCode = async (req, res) => {
   } catch (err) { return error(res, 'Failed', 500); }
 };
 
-// ================================
-// LOGIN HISTORY
-// ================================
 const getLoginHistory = async (req, res) => {
   try {
     const logs = await db.query(`
       SELECT ip_address, device_type, user_agent, status, created_at
-      FROM login_history
-      WHERE user_id = $1
+      FROM login_history WHERE user_id=$1
       ORDER BY created_at DESC LIMIT 20
     `, [req.user.id]);
     return success(res, logs.rows);
   } catch (err) { return error(res, 'Failed', 500); }
 };
 
-// ================================
-// SESSIONS
-// ================================
 const getSessions = async (req, res) => {
   try {
     const sessions = await db.query(`
       SELECT id, device_type, device_name, ip_address,
              created_at, expires_at, is_active
-      FROM user_sessions
-      WHERE user_id = $1
+      FROM user_sessions WHERE user_id=$1
       ORDER BY created_at DESC LIMIT 10
     `, [req.user.id]);
     return success(res, sessions.rows);
@@ -177,9 +149,6 @@ const revokeSession = async (req, res) => {
   } catch (err) { return error(res, 'Failed', 500); }
 };
 
-// ================================
-// KYC SUBMIT
-// ================================
 const submitKYC = async (req, res) => {
   try {
     const { full_name, date_of_birth, nationality, address,
@@ -198,7 +167,6 @@ const submitKYC = async (req, res) => {
     if (existing.rows[0]?.status === 'approved')
       return error(res, 'KYC already approved');
 
-    // Update user profile too
     await db.query(`
       UPDATE users SET
         full_name     = COALESCE($1, full_name),
@@ -207,29 +175,27 @@ const submitKYC = async (req, res) => {
         address       = COALESCE($4, address),
         updated_at    = NOW()
       WHERE id = $5
-    `, [full_name, date_of_birth || null, nationality || null,
-        address || null, req.user.id]);
+    `, [full_name, date_of_birth||null, nationality||null, address||null, req.user.id]);
 
     if (existing.rows[0]?.status === 'rejected') {
       await db.query(`
         UPDATE kyc_verifications SET
-          full_name=$1, date_of_birth=$2, nationality=$3,
-          address=$4, id_type=$5, id_number=$6,
-          id_front_url=$7, id_back_url=$8, selfie_url=$9,
-          status='pending', rejection_reason=NULL,
+          full_name=$1, date_of_birth=$2, nationality=$3, address=$4,
+          id_type=$5, id_number=$6, id_front_url=$7, id_back_url=$8,
+          selfie_url=$9, status='pending', rejection_reason=NULL,
           reviewed_by=NULL, reviewed_at=NULL, created_at=NOW()
         WHERE id=$10
       `, [full_name, date_of_birth, nationality, address,
-          id_type, id_number, id_front_url, id_back_url || null,
+          id_type, id_number, id_front_url, id_back_url||null,
           selfie_url, existing.rows[0].id]);
     } else {
       await db.query(`
         INSERT INTO kyc_verifications
-          (user_id, full_name, date_of_birth, nationality, address,
+          (user_id, level, full_name, date_of_birth, nationality, address,
            id_type, id_number, id_front_url, id_back_url, selfie_url, status)
-        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending')
+        VALUES ($1,1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'pending')
       `, [req.user.id, full_name, date_of_birth, nationality, address,
-          id_type, id_number, id_front_url, id_back_url || null, selfie_url]);
+          id_type, id_number, id_front_url, id_back_url||null, selfie_url]);
     }
 
     return success(res, {}, 'KYC submitted. Review takes 24-48 hours.');
@@ -239,21 +205,15 @@ const submitKYC = async (req, res) => {
   }
 };
 
-// ================================
-// KYC STATUS
-// ================================
 const getKYCStatus = async (req, res) => {
   try {
-    const user = await db.query(
-      'SELECT kyc_level FROM users WHERE id=$1', [req.user.id]
-    );
-    const kyc = await db.query(`
+    const user = await db.query('SELECT kyc_level FROM users WHERE id=$1', [req.user.id]);
+    const kyc  = await db.query(`
       SELECT id, status, rejection_reason, id_type,
              full_name, nationality, created_at, reviewed_at
-      FROM kyc_verifications
-      WHERE user_id=$1 ORDER BY created_at DESC LIMIT 1
+      FROM kyc_verifications WHERE user_id=$1
+      ORDER BY created_at DESC LIMIT 1
     `, [req.user.id]);
-
     return success(res, {
       kyc_level:  user.rows[0]?.kyc_level || 0,
       submission: kyc.rows[0] || null
@@ -261,7 +221,6 @@ const getKYCStatus = async (req, res) => {
   } catch (err) { return error(res, 'Failed', 500); }
 };
 
-// ── Single module.exports ─────────────────────────
 module.exports = {
   getProfile, updateProfile, uploadAvatar,
   changePassword, setAntiPhishCode,

@@ -148,6 +148,7 @@ export default function EditProfile() {
     city_name:    '',
     street:       '',
     pincode:      '',
+    saved_state:  '',
   });
 
   const [readOnly, setReadOnly] = useState({ email: '', phone: '' });
@@ -173,6 +174,13 @@ export default function EditProfile() {
         street:        p.address       || '',
         city_name:     p.city          || '',
         pincode:       p.pincode       || '',
+        saved_state:   p.state         || '',
+        // State name se code dhundho
+        state_code:    (() => {
+          if (!p.state || !p.nationality) return '';
+          const allCountries = require ? '' : '';
+          return '';
+        })(),
       }));
       setReadOnly({ email: p.email || '', phone: p.phone || '' });
     }).catch(() => {});
@@ -330,7 +338,7 @@ export default function EditProfile() {
           placeholder="Select country"
           onClick={() => setSheet('country')} />
         <Row label="State / Province"
-          value={selectedState?.name || ''}
+          value={selectedState?.name || form.saved_state || ''}
           placeholder={states.length ? 'Select state' : 'Select country first'}
           onClick={() => states.length ? setSheet('state') : null} />
         <Row label="City"

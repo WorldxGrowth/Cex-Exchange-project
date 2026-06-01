@@ -27,7 +27,7 @@ app.use(cors({
 }));
 app.use(morgan('dev'));
 app.use(require('compression')());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 require('./src/config/passport');
 
 // ── IMPORTANT: Webhook raw body FIRST (before express.json)
@@ -36,7 +36,7 @@ app.use('/api/v1/webhook/alchemy', express.raw({ type: 'application/json' }));
 app.use('/api/v1/webhook/vdchain', express.raw({ type: 'application/json' }));
 
 // ── JSON middleware (all other routes)
-app.use(express.json());
+app.use(express.json({ limit: '50mb' }));
 
 // ── Health check ───────────────────────────────────
 app.get('/health', (req, res) => {
