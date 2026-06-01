@@ -31,6 +31,7 @@ import Futures from './pages/futures/Futures';
 import Landing from './pages/landing/Landing';
 import CmsPage from './pages/cms/CmsPage';
 import Notifications from './pages/notifications/Notifications';
+import More from './pages/home/More';
 
 const hasValidToken = () => {
   try {
@@ -86,6 +87,7 @@ export default function App() {
             <Route path="deposit-detail/:id" element={<DepositDetail />} />
             <Route path="support"          element={<Support />} />
             <Route path="notifications"    element={<Notifications />} />
+            <Route path="more"           element={<More />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" />} />
