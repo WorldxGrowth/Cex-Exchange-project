@@ -48,6 +48,7 @@ export const authAPI = {
   login: (d: any) => api.post('/auth/login', d),
   logout: () => api.post('/auth/logout'),
   me: () => api.get('/auth/me'),
+  uploadAvatar: (data: any) => api.post('/user/avatar', data),
 };
 
 export const marketAPI = {
