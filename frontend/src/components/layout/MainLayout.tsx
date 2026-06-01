@@ -26,7 +26,8 @@ export default function MainLayout() {
     path.startsWith('/notifications') ||
     path.startsWith('/chart')      ||
     path.startsWith('/deposit-history') ||
-    path.startsWith('/deposit-detail');
+    path.startsWith('/deposit-detail') ||
+    path.startsWith('/more');
 
   return (
     <div style={{ background: 'var(--color-bg)', minHeight: '100vh' }}>
