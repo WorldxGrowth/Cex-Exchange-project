@@ -95,7 +95,6 @@ const sendWelcomeEmail = async (user) => {
       </a>
     </div>
   `, 'Welcome to VDExchange');
-
   return sendEmail({ to: user.email, subject: '🎉 Welcome to VDExchange!', html });
 };
 
@@ -107,10 +106,10 @@ const sendDepositEmail = async (user, deposit) => {
     <div style="background:#2b2f36;border-radius:8px;padding:20px;margin:20px 0;">
       <table width="100%" cellpadding="0" cellspacing="0">
         ${[
-          ['Coin', `${deposit.symbol}`],
-          ['Amount', `<strong style="color:#0ecb81;font-size:18px;">+${parseFloat(deposit.amount).toFixed(6)} ${deposit.symbol}</strong>`],
+          ['Coin', deposit.symbol],
+          ['Amount', '<strong style="color:#0ecb81;font-size:18px;">+' + parseFloat(deposit.amount).toFixed(6) + ' ' + deposit.symbol + '</strong>'],
           ['Network', deposit.network],
-          ['TX Hash', `<span style="font-size:11px;color:#1890ff;">${deposit.txhash?.slice(0,20)}...${deposit.txhash?.slice(-8)}</span>`],
+          ['TX Hash', '<span style="font-size:11px;color:#1890ff;">' + (deposit.txhash ? deposit.txhash.slice(0,20) + '...' + deposit.txhash.slice(-8) : 'N/A') + '</span>'],
           ['Time', new Date().toLocaleString()],
           ['Status', '<span style="color:#0ecb81;">✅ Completed</span>'],
         ].map(([k, v]) => `
@@ -127,10 +126,9 @@ const sendDepositEmail = async (user, deposit) => {
       </a>
     </div>
   `, 'Deposit Received');
-
   return sendEmail({
     to: user.email,
-    subject: `✅ Deposit Confirmed: ${parseFloat(deposit.amount).toFixed(4)} ${deposit.symbol}`,
+    subject: '✅ Deposit Confirmed: ' + parseFloat(deposit.amount).toFixed(4) + ' ' + deposit.symbol,
     html
   });
 };
@@ -144,11 +142,11 @@ const sendWithdrawalEmail = async (user, withdrawal) => {
       <table width="100%" cellpadding="0" cellspacing="0">
         ${[
           ['Coin', withdrawal.symbol],
-          ['Amount', `<strong style="color:#f0b90b;font-size:18px;">${parseFloat(withdrawal.amount).toFixed(6)} ${withdrawal.symbol}</strong>`],
-          ['Fee', `${parseFloat(withdrawal.fee || 0).toFixed(6)} ${withdrawal.symbol}`],
-          ['You Received', `<strong style="color:#0ecb81;">${parseFloat(withdrawal.receive_amount || withdrawal.amount).toFixed(6)} ${withdrawal.symbol}</strong>`],
-          ['To Address', `<span style="font-size:11px;color:#1890ff;">${withdrawal.to_address?.slice(0,16)}...${withdrawal.to_address?.slice(-8)}</span>`],
-          ['TX Hash', withdrawal.txhash ? `<span style="font-size:11px;color:#1890ff;">${withdrawal.txhash?.slice(0,16)}...${withdrawal.txhash?.slice(-8)}</span>` : 'Processing...'],
+          ['Amount', '<strong style="color:#f0b90b;font-size:18px;">' + parseFloat(withdrawal.amount).toFixed(6) + ' ' + withdrawal.symbol + '</strong>'],
+          ['Fee', parseFloat(withdrawal.fee || 0).toFixed(6) + ' ' + withdrawal.symbol],
+          ['You Received', '<strong style="color:#0ecb81;">' + parseFloat(withdrawal.receive_amount || withdrawal.amount).toFixed(6) + ' ' + withdrawal.symbol + '</strong>'],
+          ['To Address', '<span style="font-size:11px;color:#1890ff;">' + (withdrawal.to_address ? withdrawal.to_address.slice(0,16) + '...' + withdrawal.to_address.slice(-8) : 'N/A') + '</span>'],
+          ['TX Hash', withdrawal.txhash ? '<span style="font-size:11px;color:#1890ff;">' + withdrawal.txhash.slice(0,16) + '...' + withdrawal.txhash.slice(-8) + '</span>' : 'Processing...'],
           ['Status', '<span style="color:#0ecb81;">✅ Completed</span>'],
         ].map(([k, v]) => `
           <tr>
@@ -159,10 +157,9 @@ const sendWithdrawalEmail = async (user, withdrawal) => {
       </table>
     </div>
   `, 'Withdrawal Processed');
-
   return sendEmail({
     to: user.email,
-    subject: `📤 Withdrawal: ${parseFloat(withdrawal.amount).toFixed(4)} ${withdrawal.symbol} Sent`,
+    subject: '📤 Withdrawal: ' + parseFloat(withdrawal.amount).toFixed(4) + ' ' + withdrawal.symbol + ' Sent',
     html
   });
 };
@@ -175,8 +172,8 @@ const sendWithdrawalRejectedEmail = async (user, withdrawal, reason) => {
     <div style="background:#2b2f36;border-radius:8px;padding:20px;margin:20px 0;">
       <table width="100%" cellpadding="0" cellspacing="0">
         ${[
-          ['Amount', `${parseFloat(withdrawal.amount).toFixed(6)} ${withdrawal.symbol}`],
-          ['Reason', `<span style="color:#f6465d;">${reason || 'Rejected by admin'}</span>`],
+          ['Amount', parseFloat(withdrawal.amount).toFixed(6) + ' ' + withdrawal.symbol],
+          ['Reason', '<span style="color:#f6465d;">' + (reason || 'Rejected by admin') + '</span>'],
           ['Refunded', '<span style="color:#0ecb81;">✅ Yes - Back to your account</span>'],
         ].map(([k, v]) => `
           <tr>
@@ -186,14 +183,10 @@ const sendWithdrawalRejectedEmail = async (user, withdrawal, reason) => {
         `).join('')}
       </table>
     </div>
-    <p style="color:#ccc;font-size:13px;">
-      If you have questions, please contact our support team.
-    </p>
   `, 'Withdrawal Rejected');
-
   return sendEmail({
     to: user.email,
-    subject: `❌ Withdrawal Rejected - ${parseFloat(withdrawal.amount).toFixed(4)} ${withdrawal.symbol} Refunded`,
+    subject: '❌ Withdrawal Rejected - ' + parseFloat(withdrawal.amount).toFixed(4) + ' ' + withdrawal.symbol + ' Refunded',
     html
   });
 };
@@ -207,20 +200,9 @@ const sendKYCEmail = async (user, status, reason = '') => {
     </h2>
     <p style="color:#ccc;">
       ${isApproved
-        ? 'Congratulations! Your identity verification has been approved. You can now enjoy full access to VDExchange.'
-        : `Your KYC submission was rejected. ${reason ? 'Reason: ' + reason : 'Please resubmit with correct documents.'}`
-      }
+        ? 'Congratulations! Your identity verification has been approved.'
+        : 'Your KYC submission was rejected. ' + (reason ? 'Reason: ' + reason : 'Please resubmit with correct documents.')}
     </p>
-    ${isApproved ? `
-    <div style="background:#0ecb8115;border:1px solid #0ecb8130;border-radius:8px;padding:16px;margin:16px 0;">
-      <p style="color:#0ecb81;margin:0;font-weight:bold;">✅ Benefits Unlocked:</p>
-      <ul style="color:#ccc;margin:8px 0 0;padding-left:20px;line-height:2;">
-        <li>Higher withdrawal limits</li>
-        <li>Full trading access</li>
-        <li>Priority support</li>
-      </ul>
-    </div>
-    ` : ''}
     <div style="text-align:center;margin-top:20px;">
       <a href="${process.env.FRONTEND_URL}/${isApproved ? 'trade' : 'kyc'}"
         style="background:${isApproved ? '#0ecb81' : '#f0b90b'};color:#000;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;">
@@ -228,7 +210,6 @@ const sendKYCEmail = async (user, status, reason = '') => {
       </a>
     </div>
   `, 'KYC Status Update');
-
   return sendEmail({
     to: user.email,
     subject: isApproved ? '✅ KYC Approved - Start Trading!' : '❌ KYC Rejected - Action Required',
@@ -236,32 +217,40 @@ const sendKYCEmail = async (user, status, reason = '') => {
   });
 };
 
-// 6. New Login Alert
-const sendLoginAlertEmail = async (user, loginInfo) => {
+// 6. New Login Alert (UPGRADED - IP + Device + Location)
+const sendLoginAlertEmail = async (user, loginInfo = {}) => {
+  const rows = [
+    ['📍 IP Address', loginInfo.ip || 'Unknown'],
+    ['📱 Device',     loginInfo.device || 'Unknown'],
+    ['🌐 Browser',    loginInfo.browser || 'Unknown'],
+    ['💻 OS',         loginInfo.os || 'Unknown'],
+    ['🌍 Location',   [loginInfo.city, loginInfo.country].filter(Boolean).join(', ') || 'Unknown'],
+    ['🕒 Time',       loginInfo.time || new Date().toLocaleString()],
+  ];
+
   const html = baseTemplate(`
     <h2 style="color:#f0b90b;margin:0 0 16px;">🔐 New Login Detected</h2>
-    <p style="color:#ccc;">A new login was detected on your VDExchange account.</p>
+    <p style="color:#ccc;margin:0 0 20px;">
+      A new login was detected on your VDExchange account.
+    </p>
     <div style="background:#2b2f36;border-radius:8px;padding:20px;margin:20px 0;">
       <table width="100%" cellpadding="0" cellspacing="0">
-        ${[
-          ['IP Address', loginInfo.ip || 'Unknown'],
-          ['Device', loginInfo.device || 'Unknown'],
-          ['Time', new Date().toLocaleString()],
-        ].map(([k, v]) => `
+        ${rows.map(([k, v]) => `
           <tr>
-            <td style="color:#848e9c;padding:6px 0;font-size:13px;">${k}</td>
-            <td style="color:#fff;padding:6px 0;font-size:13px;text-align:right;">${v}</td>
+            <td style="color:#848e9c;padding:8px 0;border-bottom:1px solid #1e2026;font-size:13px;width:40%;">${k}</td>
+            <td style="color:#eaecef;padding:8px 0;border-bottom:1px solid #1e2026;font-size:13px;text-align:right;font-weight:600;">${v}</td>
           </tr>
         `).join('')}
       </table>
     </div>
-    <div style="background:#f6465d15;border:1px solid #f6465d30;border-radius:8px;padding:12px;margin-top:16px;">
-      <p style="color:#f6465d;margin:0;font-size:13px;">
-        ⚠️ If this wasn't you, please change your password immediately!
+    <div style="background:#f6465d15;border:1px solid #f6465d40;border-radius:8px;padding:14px;margin-top:16px;">
+      <p style="color:#f6465d;margin:0;font-size:13px;font-weight:600;">
+        ⚠️ If this wasn't you, please change your password immediately and enable 2FA.
       </p>
     </div>
   `, 'New Login Alert');
 
+  if (!user?.email) return;
   return sendEmail({
     to: user.email,
     subject: '🔐 New Login Alert - VDExchange',
@@ -281,7 +270,6 @@ const sendPasswordChangedEmail = async (user) => {
     </div>
     <p style="color:#848e9c;font-size:12px;">Time: ${new Date().toLocaleString()}</p>
   `, 'Password Changed');
-
   return sendEmail({
     to: user.email,
     subject: '🔑 Password Changed - VDExchange',
@@ -296,12 +284,8 @@ const sendForgotPasswordEmail = async (user, otp) => {
     <p style="color:#ccc;">Use the OTP below to reset your password. Valid for 10 minutes.</p>
     <div style="text-align:center;margin:24px 0;">
       <div style="background:#2b2f36;border-radius:12px;padding:24px;display:inline-block;">
-        <p style="color:#848e9c;margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:2px;">
-          Your OTP Code
-        </p>
-        <p style="color:#f0b90b;font-size:40px;font-weight:bold;margin:0;letter-spacing:12px;">
-          ${otp}
-        </p>
+        <p style="color:#848e9c;margin:0 0 8px;font-size:12px;text-transform:uppercase;letter-spacing:2px;">Your OTP Code</p>
+        <p style="color:#f0b90b;font-size:40px;font-weight:bold;margin:0;letter-spacing:12px;">${otp}</p>
         <p style="color:#848e9c;margin:8px 0 0;font-size:11px;">Valid for 10 minutes</p>
       </div>
     </div>
@@ -311,10 +295,9 @@ const sendForgotPasswordEmail = async (user, otp) => {
       </p>
     </div>
   `, 'Password Reset OTP');
-
   return sendEmail({
     to: user.email,
-    subject: `🔐 OTP: ${otp} - Reset Your VDExchange Password`,
+    subject: '🔐 OTP: ' + otp + ' - Reset Your VDExchange Password',
     html
   });
 };
@@ -329,8 +312,8 @@ const sendLargeWithdrawalAlert = async (withdrawal) => {
       <table width="100%" cellpadding="0" cellspacing="0">
         ${[
           ['User', withdrawal.email],
-          ['Amount', `<strong style="color:#f6465d;font-size:18px;">${parseFloat(withdrawal.amount).toFixed(6)} ${withdrawal.symbol}</strong>`],
-          ['To Address', `${withdrawal.to_address?.slice(0,16)}...`],
+          ['Amount', '<strong style="color:#f6465d;font-size:18px;">' + parseFloat(withdrawal.amount).toFixed(6) + ' ' + withdrawal.symbol + '</strong>'],
+          ['To Address', (withdrawal.to_address ? withdrawal.to_address.slice(0,16) + '...' : 'N/A')],
           ['Network', withdrawal.network_name],
           ['TX ID', withdrawal.tx_id],
           ['Time', new Date().toLocaleString()],
@@ -349,15 +332,14 @@ const sendLargeWithdrawalAlert = async (withdrawal) => {
       </a>
     </div>
   `, 'Large Withdrawal Alert');
-
   return sendEmail({
     to: adminEmail,
-    subject: `⚠️ ALERT: Large Withdrawal ${parseFloat(withdrawal.amount).toFixed(2)} ${withdrawal.symbol}`,
+    subject: '⚠️ ALERT: Large Withdrawal ' + parseFloat(withdrawal.amount).toFixed(2) + ' ' + withdrawal.symbol,
     html
   });
 };
 
-// 10. Bulk email to users
+// 10. Bulk email
 const sendBulkEmail = async (users, subject, content) => {
   const results = [];
   for (const user of users) {
@@ -372,13 +354,12 @@ const sendBulkEmail = async (users, subject, content) => {
     `);
     const result = await sendEmail({ to: user.email, subject, html });
     results.push({ email: user.email, ...result });
-    // Rate limit: 1 email per 100ms
     await new Promise(r => setTimeout(r, 100));
   }
   return results;
 };
 
-// Test email
+// 11. Test email
 const sendTestEmail = async (to) => {
   return sendEmail({
     to,
@@ -391,15 +372,7 @@ const sendTestEmail = async (to) => {
   });
 };
 
-module.exports = {
-  sendEmail, sendWelcomeEmail, sendDepositEmail,
-  sendWithdrawalEmail, sendWithdrawalRejectedEmail,
-  sendKYCEmail, sendLoginAlertEmail, sendPasswordChangedEmail,
-  sendForgotPasswordEmail, sendLargeWithdrawalAlert,
-  sendBulkEmail, sendTestEmail
-};
-
-// ── OTP Email ─────────────────────────────────────
+// 12. OTP Email
 const sendOTPEmail = async (user, otp, type = 'login') => {
   const typeLabels = {
     login:      'Login Verification',
@@ -409,36 +382,39 @@ const sendOTPEmail = async (user, otp, type = 'login') => {
   };
   const label = typeLabels[type] || 'Verification';
 
-  const content = `
+  const html = baseTemplate(`
     <h2 style="color:#eaecef;margin:0 0 16px;">Your ${label} Code</h2>
     <p style="color:#848e9c;margin:0 0 24px;line-height:1.6;">
       Use the following OTP to complete your ${label.toLowerCase()}.
       This code expires in <strong style="color:#f0b90b;">5 minutes</strong>.
     </p>
     <div style="text-align:center;margin:24px 0;">
-      <div style="display:inline-block;background:#0b0e11;border:2px solid #f0b90b;
-                  border-radius:12px;padding:16px 40px;">
-        <span style="font-size:36px;font-weight:800;letter-spacing:12px;
-                     color:#f0b90b;">${otp}</span>
+      <div style="display:inline-block;background:#0b0e11;border:2px solid #f0b90b;border-radius:12px;padding:16px 40px;">
+        <span style="font-size:36px;font-weight:800;letter-spacing:12px;color:#f0b90b;">${otp}</span>
       </div>
     </div>
     <p style="color:#848e9c;font-size:13px;text-align:center;margin:16px 0 0;">
       Never share this code with anyone. VDExchange will never ask for your OTP.
     </p>
-    <div style="margin:20px 0 0;padding:12px;background:#2b2f36;border-radius:8px;
-                border-left:3px solid #f6465d;">
+    <div style="margin:20px 0 0;padding:12px;background:#2b2f36;border-radius:8px;border-left:3px solid #f6465d;">
       <p style="margin:0;color:#848e9c;font-size:12px;">
         ⚠️ If you didn't request this, please secure your account immediately.
       </p>
     </div>
-  `;
+  `, label + ' - VDExchange');
 
   await transporter.sendMail({
-    from:    `"VDExchange" <${process.env.GMAIL_USER}>`,
+    from:    '"VDExchange" <' + process.env.GMAIL_USER + '>',
     to:      user.email,
-    subject: `${otp} is your VDExchange ${label} code`,
-    html:    baseTemplate(content, `${label} - VDExchange`),
+    subject: otp + ' is your VDExchange ' + label + ' code',
+    html,
   });
 };
 
-module.exports = Object.assign(module.exports, { sendOTPEmail });
+module.exports = {
+  sendEmail, sendWelcomeEmail, sendDepositEmail,
+  sendWithdrawalEmail, sendWithdrawalRejectedEmail,
+  sendKYCEmail, sendLoginAlertEmail, sendPasswordChangedEmail,
+  sendForgotPasswordEmail, sendLargeWithdrawalAlert,
+  sendBulkEmail, sendTestEmail, sendOTPEmail
+};

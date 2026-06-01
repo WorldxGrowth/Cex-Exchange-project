@@ -9,6 +9,7 @@ const app = express();
 const server = http.createServer(app);
 
 // ── Middleware ─────────────────────────────────────
+app.set("trust proxy", true);
 app.use(helmet());
 app.use(cors({
   origin: process.env.NODE_ENV === 'production'

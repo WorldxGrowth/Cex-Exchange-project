@@ -1,10 +1,12 @@
-const bcrypt = require('bcryptjs');
-const db = require('../config/database');
-const { generateTokens } = require('../utils/jwt');
+const bcrypt   = require('bcryptjs');
+const db       = require('../config/database');
+const UAParser = require('ua-parser-js');
+const geoip    = require('geoip-lite');
+const { generateTokens }             = require('../utils/jwt');
 const { generateUID, generateReferralCode } = require('../utils/helpers');
-const { success, error } = require('../utils/response');
+const { success, error }             = require('../utils/response');
 
-// Email helper
+// Email helper - always safe
 const sendEmail = async (fn, ...args) => {
   try {
     const emailService = require('../services/email/emailService');
@@ -14,22 +16,75 @@ const sendEmail = async (fn, ...args) => {
   }
 };
 
-// Alchemy address register helper (non-blocking)
+// ── Get real IP + Device + Location ──────────────
+const getRequestInfo = (req) => {
+  try {
+    const ip =
+      req.headers['cf-connecting-ip'] ||
+      req.headers['x-real-ip'] ||
+      (req.headers['x-forwarded-for'] || '').split(',')[0].trim() ||
+      req.ip ||
+      '0.0.0.0';
+
+    const cleanIp = ip.replace('::ffff:', '');
+    // IPv6 to IPv4 convert if possible
+    const lookupIp = cleanIp.includes(':') && !cleanIp.startsWith('::ffff:')
+      ? cleanIp  // real IPv6
+      : cleanIp.replace('::ffff:', '');
+
+    const parser = new UAParser(req.headers['user-agent']);
+    const ua     = parser.getResult();
+
+    const deviceType = ua.device.type || 'desktop';
+    const browser    = ua.browser.name || 'Unknown';
+    const os         = ua.os.name || 'Unknown';
+    const model      = ua.device.model || '';
+
+    // Try IPv6 first, fallback to IPv4
+    let geo = geoip.lookup(cleanIp) || {};
+    if (!geo.country && cleanIp.includes(':')) {
+      // Try with ipv6 lookup
+      geo = geoip.lookup(cleanIp) || {};
+    }
+
+    const time = new Date().toLocaleString('en-IN', {
+      timeZone: 'Asia/Kolkata',
+      day: '2-digit', month: '2-digit', year: 'numeric',
+      hour: '2-digit', minute: '2-digit', hour12: true
+    });
+
+    return {
+      ip:      cleanIp,
+      device:  deviceType.charAt(0).toUpperCase() + deviceType.slice(1),
+      browser,
+      os,
+      model,
+      country: geo.country || '',
+      city:    geo.city    || '',
+      time,
+    };
+  } catch (e) {
+    return {
+      ip: (req.ip || '0.0.0.0').replace('::ffff:', ''),
+      device: 'Unknown', browser: 'Unknown', os: 'Unknown',
+      country: '', city: '', time: new Date().toLocaleString()
+    };
+  }
+};
+
+// ── Alchemy address register helper (non-blocking) ─
 const registerAddressToAlchemy = async (userId) => {
   try {
     if (process.env.ALCHEMY_NOTIFY_ENABLED !== 'true') return;
     const alchemyService = require('../services/alchemyService');
-
-    // Get all deposit addresses for this user
     const addresses = await db.query(
       'SELECT network, address FROM user_deposit_addresses WHERE user_id = $1',
       [userId]
     );
-
     for (const row of addresses.rows) {
-      if (row.network === 'VDCHAIN') continue; // VDChain = apna node
+      if (row.network === 'VDCHAIN') continue;
       await alchemyService.registerNewUserAddress(userId, row.network, row.address);
-      await new Promise(r => setTimeout(r, 200)); // Small delay
+      await new Promise(r => setTimeout(r, 200));
     }
   } catch (e) {
     console.error('[Auth] Alchemy register error (non-blocking):', e.message);
@@ -49,29 +104,37 @@ const register = async (req, res) => {
       return error(res, 'Email or phone required');
 
     if (email) {
-      const existing = await db.query('SELECT id FROM users WHERE email = $1', [email.toLowerCase()]);
+      const existing = await db.query(
+        'SELECT id FROM users WHERE email = $1', [email.toLowerCase()]
+      );
       if (existing.rows.length > 0) return error(res, 'Email already registered');
     }
     if (phone) {
-      const existing = await db.query('SELECT id FROM users WHERE phone = $1', [phone]);
+      const existing = await db.query(
+        'SELECT id FROM users WHERE phone = $1', [phone]
+      );
       if (existing.rows.length > 0) return error(res, 'Phone already registered');
     }
 
     let referredBy = null;
     if (referral_code) {
-      const referrer = await db.query('SELECT id FROM users WHERE referral_code = $1', [referral_code]);
+      const referrer = await db.query(
+        'SELECT id FROM users WHERE referral_code = $1', [referral_code]
+      );
       if (referrer.rows.length > 0) referredBy = referrer.rows[0].id;
     }
 
-    const passwordHash = await bcrypt.hash(password, 12);
-    const uid = generateUID();
+    const passwordHash   = await bcrypt.hash(password, 12);
+    const uid            = generateUID();
     const myReferralCode = generateReferralCode();
 
     const newUser = await db.query(`
       INSERT INTO users (uid, email, phone, password_hash, referral_code, referred_by)
       VALUES ($1, $2, $3, $4, $5, $6)
       RETURNING id, uid, email, phone, status, kyc_level, vip_level, referral_code, created_at
-    `, [uid, email ? email.toLowerCase() : null, phone || null,
+    `, [uid,
+        email ? email.toLowerCase() : null,
+        phone || null,
         passwordHash, myReferralCode, referredBy]);
 
     const user = newUser.rows[0];
@@ -81,33 +144,40 @@ const register = async (req, res) => {
     const { accessToken, refreshToken } = generateTokens(user.id);
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
+    const reqInfo = getRequestInfo(req);
+
     await db.query(`
-      INSERT INTO user_sessions (user_id, token, device_type, ip_address, user_agent, expires_at)
+      INSERT INTO user_sessions
+        (user_id, token, device_type, ip_address, user_agent, expires_at)
       VALUES ($1, $2, $3, $4, $5, $6)
-    `, [user.id, accessToken, req.headers['x-device-type'] || 'web',
-        req.ip, req.headers['user-agent'], expiresAt]);
+    `, [user.id, accessToken,
+        reqInfo.device.toLowerCase() || 'web',
+        reqInfo.ip, req.headers['user-agent'], expiresAt]);
 
     await db.query(`
       INSERT INTO security_logs (user_id, action, ip_address, status)
       VALUES ($1, 'register', $2, 'success')
-    `, [user.id, req.ip]);
+    `, [user.id, reqInfo.ip]);
 
-    // Welcome email - async, safe
+    // Welcome email - async safe
     sendEmail('sendWelcomeEmail', user);
 
-    // Register deposit addresses to Alchemy - async, non-blocking
-    // Small delay to allow deposit addresses to be created first
+    // Alchemy - async non-blocking
     setTimeout(() => registerAddressToAlchemy(user.id), 3000);
 
     return success(res, {
       user: {
-        uid: user.uid, email: user.email, phone: user.phone,
-        kyc_level: user.kyc_level, vip_level: user.vip_level,
-        referral_code: user.referral_code, created_at: user.created_at
+        uid:           user.uid,
+        email:         user.email,
+        phone:         user.phone,
+        kyc_level:     user.kyc_level,
+        vip_level:     user.vip_level,
+        referral_code: user.referral_code,
+        created_at:    user.created_at
       },
-      access_token: accessToken,
+      access_token:  accessToken,
       refresh_token: refreshToken,
-      expires_in: '7d'
+      expires_in:    '7d'
     }, 'Registration successful', 201);
 
   } catch (err) {
@@ -123,74 +193,108 @@ const login = async (req, res) => {
   try {
     const { email, phone, password, device_type, device_name } = req.body;
 
-    if (!password) return error(res, 'Password required');
-    if (!email && !phone) return error(res, 'Email or phone required');
+    if (!password)         return error(res, 'Password required');
+    if (!email && !phone)  return error(res, 'Email or phone required');
 
     let userResult;
     if (email) {
-      userResult = await db.query('SELECT * FROM users WHERE email = $1', [email.toLowerCase()]);
+      userResult = await db.query(
+        'SELECT * FROM users WHERE email = $1', [email.toLowerCase()]
+      );
     } else {
-      userResult = await db.query('SELECT * FROM users WHERE phone = $1', [phone]);
+      userResult = await db.query(
+        'SELECT * FROM users WHERE phone = $1', [phone]
+      );
     }
 
     if (userResult.rows.length === 0) return error(res, 'Invalid credentials');
 
     const user = userResult.rows[0];
 
-    if (user.status === 'banned') return error(res, 'Account banned');
+    if (user.status === 'banned')    return error(res, 'Account banned');
     if (user.status === 'suspended') return error(res, 'Account suspended');
 
     const isValid = await bcrypt.compare(password, user.password_hash);
+
+    // Get request info for logging
+    const reqInfo = getRequestInfo(req);
+
     if (!isValid) {
       await db.query(`
-        INSERT INTO login_history (user_id, ip_address, device_type, user_agent, status)
+        INSERT INTO login_history
+          (user_id, ip_address, device_type, user_agent, status)
         VALUES ($1, $2, $3, $4, 'failed')
-      `, [user.id, req.ip, device_type || 'web', req.headers['user-agent']]);
+      `, [user.id, reqInfo.ip,
+          reqInfo.device.toLowerCase() || 'web',
+          req.headers['user-agent']]);
       return error(res, 'Invalid credentials');
     }
 
     // Check 2FA
-    const twoFA = await db.query('SELECT * FROM two_factor_auth WHERE user_id = $1', [user.id]);
+    const twoFA       = await db.query(
+      'SELECT * FROM two_factor_auth WHERE user_id = $1', [user.id]
+    );
     const twoFAEnabled = twoFA.rows[0]?.is_enabled || false;
 
     if (twoFAEnabled) {
-      const tempToken = require('crypto').randomBytes(32).toString('hex');
-      const { cache } = require('../config/redis');
+      const tempToken    = require('crypto').randomBytes(32).toString('hex');
+      const { cache }    = require('../config/redis');
       await cache.set(`2fa_temp:${tempToken}`, { userId: user.id }, 300);
-      return success(res, { requires_2fa: true, temp_token: tempToken }, '2FA verification required');
+      return success(res,
+        { requires_2fa: true, temp_token: tempToken },
+        '2FA verification required'
+      );
     }
 
     const { accessToken, refreshToken } = generateTokens(user.id);
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
 
     await db.query(`
-      INSERT INTO user_sessions (user_id, token, device_type, device_name, ip_address, user_agent, expires_at)
+      INSERT INTO user_sessions
+        (user_id, token, device_type, device_name, ip_address, user_agent, expires_at)
       VALUES ($1, $2, $3, $4, $5, $6, $7)
-    `, [user.id, accessToken, device_type || 'web', device_name || null,
-        req.ip, req.headers['user-agent'], expiresAt]);
+    `, [user.id, accessToken,
+        reqInfo.device.toLowerCase() || 'web',
+        device_name || (reqInfo.browser + ' on ' + reqInfo.os),
+        reqInfo.ip, req.headers['user-agent'], expiresAt]);
 
     await db.query(
       'UPDATE users SET last_login_at = NOW(), last_login_ip = $1 WHERE id = $2',
-      [req.ip, user.id]
+      [reqInfo.ip, user.id]
     );
 
     await db.query(`
-      INSERT INTO login_history (user_id, ip_address, device_type, user_agent, status)
+      INSERT INTO login_history
+        (user_id, ip_address, device_type, user_agent, status)
       VALUES ($1, $2, $3, $4, 'success')
-    `, [user.id, req.ip, device_type || 'web', req.headers['user-agent']]);
+    `, [user.id, reqInfo.ip,
+        reqInfo.device.toLowerCase() || 'web',
+        req.headers['user-agent']]);
 
-    // Login alert email - async, safe
-    sendEmail('sendLoginAlertEmail', user, { ip: req.ip, device: device_type });
+    // Login alert email with full device info - async safe
+    sendEmail('sendLoginAlertEmail', user, {
+      ip:      reqInfo.ip,
+      device:  reqInfo.device,
+      browser: reqInfo.browser,
+      os:      reqInfo.os,
+      country: reqInfo.country,
+      city:    reqInfo.city,
+      time:    reqInfo.time,
+    });
 
     return success(res, {
       user: {
-        uid: user.uid, email: user.email, phone: user.phone,
-        kyc_level: user.kyc_level, vip_level: user.vip_level,
-        theme: user.theme, language: user.language
+        uid:       user.uid,
+        email:     user.email,
+        phone:     user.phone,
+        kyc_level: user.kyc_level,
+        vip_level: user.vip_level,
+        theme:     user.theme,
+        language:  user.language
       },
-      access_token: accessToken,
+      access_token:  accessToken,
       refresh_token: refreshToken,
-      expires_in: '7d'
+      expires_in:    '7d'
     }, 'Login successful');
 
   } catch (err) {
@@ -235,7 +339,7 @@ const getMe = async (req, res) => {
     return success(res, {
       ...user.rows[0],
       two_fa_enabled: twoFA.rows[0]?.is_enabled || false,
-      two_fa_method: twoFA.rows[0]?.method || null
+      two_fa_method:  twoFA.rows[0]?.method     || null
     });
   } catch (err) {
     return error(res, 'Failed to get profile', 500);
@@ -260,12 +364,13 @@ const googleCallback = (req, res, next) => {
   }, (err, data) => {
     if (err || !data)
       return res.redirect(`${process.env.FRONTEND_URL}/login?error=google_failed`);
-
-    // Register Alchemy addresses for Google OAuth user too
     setTimeout(() => registerAddressToAlchemy(data.user.id), 3000);
-
-    res.redirect(`${process.env.FRONTEND_URL}/auth/google/success?token=${data.token}&uid=${data.user.uid}&email=${data.user.email}`);
+    res.redirect(
+      `${process.env.FRONTEND_URL}/auth/google/success?token=${data.token}&uid=${data.user.uid}&email=${data.user.email}`
+    );
   })(req, res, next);
 };
 
-module.exports = { register, login, logout, getMe, googleAuth, googleCallback };
+module.exports = {
+  register, login, logout, getMe, googleAuth, googleCallback
+};
