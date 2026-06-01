@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ChevronLeft, MessageCircle, Mail, FileText, ChevronRight, ExternalLink } from 'lucide-react';
 

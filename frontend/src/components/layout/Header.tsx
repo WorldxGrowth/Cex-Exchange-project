@@ -1,10 +1,19 @@
 import { useNavigate } from 'react-router-dom';
+import { useEffect, useState } from 'react';
 import { useStore } from '../../store/useStore';
+import { notifAPI } from '../../services/api';
 import { Search, ScanLine, HelpCircle, Bell, Sun, Moon, UserCircle } from 'lucide-react';
 
 export default function Header() {
-  const { theme, toggleTheme, user } = useStore();
+  const { theme, toggleTheme } = useStore();
   const navigate = useNavigate();
+  const [unreadCount, setUnreadCount] = useState(0);
+
+  useEffect(() => {
+    notifAPI.getAll().then((res: any) => {
+      setUnreadCount(res.data?.unread_count || 0);
+    }).catch(() => {});
+  }, []);
 
   return (
     <header style={{
@@ -50,29 +59,40 @@ export default function Header() {
 
         <button onClick={() => navigate('/scanner')} style={{
           background: 'none', border: 'none', cursor: 'pointer',
-          color: 'var(--color-muted)', padding: '6px', display: 'flex', alignItems: 'center'
+          color: 'var(--color-muted)', padding: '6px',
+          display: 'flex', alignItems: 'center'
         }}>
           <ScanLine size={19} />
         </button>
 
         <button onClick={() => navigate('/support')} style={{
           background: 'none', border: 'none', cursor: 'pointer',
-          color: 'var(--color-muted)', padding: '6px', display: 'flex', alignItems: 'center'
+          color: 'var(--color-muted)', padding: '6px',
+          display: 'flex', alignItems: 'center'
         }}>
           <HelpCircle size={19} />
         </button>
 
-        <button style={{
+        {/* Bell - with unread badge */}
+        <button onClick={() => navigate('/notifications')} style={{
           background: 'none', border: 'none', cursor: 'pointer',
-          color: 'var(--color-muted)', padding: '6px', position: 'relative',
-          display: 'flex', alignItems: 'center'
+          color: 'var(--color-muted)', padding: '6px',
+          position: 'relative', display: 'flex', alignItems: 'center'
         }}>
           <Bell size={19} />
-          <span style={{
-            position: 'absolute', top: 4, right: 4, width: 7, height: 7,
-            borderRadius: '50%', background: 'var(--color-danger)',
-            border: '1.5px solid var(--color-surface)'
-          }} />
+          {unreadCount > 0 && (
+            <span style={{
+              position: 'absolute', top: 2, right: 2,
+              minWidth: 16, height: 16, borderRadius: 8,
+              background: 'var(--color-danger)',
+              border: '1.5px solid var(--color-surface)',
+              fontSize: 9, fontWeight: 700, color: '#fff',
+              display: 'flex', alignItems: 'center',
+              justifyContent: 'center', padding: '0 3px'
+            }}>
+              {unreadCount > 99 ? '99+' : unreadCount}
+            </span>
+          )}
         </button>
       </div>
     </header>

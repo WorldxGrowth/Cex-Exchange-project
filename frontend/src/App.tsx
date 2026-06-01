@@ -30,6 +30,7 @@ import DepositDetail from './pages/assets/DepositDetail';
 import Futures from './pages/futures/Futures';
 import Landing from './pages/landing/Landing';
 import CmsPage from './pages/cms/CmsPage';
+import Notifications from './pages/notifications/Notifications';
 
 const hasValidToken = () => {
   try {
@@ -53,37 +54,38 @@ export default function App() {
       <BrowserRouter>
         <Routes>
           {/* ── Public routes ─── */}
-          <Route path="/"        element={<Landing />} />
+          <Route path="/"            element={<Landing />} />
           <Route path="/pages/:slug" element={<CmsPage />} />
-          <Route path="/login"   element={<Login />} />
-          <Route path="/register" element={<Register />} />
+          <Route path="/login"       element={<Login />} />
+          <Route path="/register"    element={<Register />} />
           <Route path="/auth/google/success" element={<GoogleSuccess />} />
-          <Route path="/scanner" element={<PrivateRoute><Scanner /></PrivateRoute>} />
+          <Route path="/scanner"     element={<PrivateRoute><Scanner /></PrivateRoute>} />
 
           {/* ── Private routes ─── */}
           <Route path="/" element={<PrivateRoute><MainLayout /></PrivateRoute>}>
-            <Route path="home"          element={<Home />} />
-            <Route path="markets"       element={<Markets />} />
-            <Route path="trade"         element={<Trade />} />
-            <Route path="trade/:symbol" element={<Trade />} />
-            <Route path="assets"        element={<Assets />} />
-            <Route path="deposit"       element={<Deposit />} />
-            <Route path="withdraw"      element={<Withdraw />} />
-            <Route path="transfer"      element={<Transfer />} />
-            <Route path="profile"       element={<Profile />} />
-            <Route path="referral"      element={<Referral />} />
-            <Route path="kyc"           element={<KYC />} />
-            <Route path="listing"       element={<ListingApply />} />
-            <Route path="security"      element={<Security />} />
-            <Route path="edit-profile"  element={<EditProfile />} />
-            <Route path="2fa"           element={<TwoFA />} />
-            <Route path="chart/:symbol" element={<Chart />} />
-            <Route path="orders"        element={<Orders />} />
-            <Route path="futures"       element={<Futures />} />
-            <Route path="futures/:symbol" element={<Futures />} />
-            <Route path="deposit-history" element={<DepositHistory />} />
+            <Route path="home"             element={<Home />} />
+            <Route path="markets"          element={<Markets />} />
+            <Route path="trade"            element={<Trade />} />
+            <Route path="trade/:symbol"    element={<Trade />} />
+            <Route path="assets"           element={<Assets />} />
+            <Route path="deposit"          element={<Deposit />} />
+            <Route path="withdraw"         element={<Withdraw />} />
+            <Route path="transfer"         element={<Transfer />} />
+            <Route path="profile"          element={<Profile />} />
+            <Route path="referral"         element={<Referral />} />
+            <Route path="kyc"              element={<KYC />} />
+            <Route path="listing"          element={<ListingApply />} />
+            <Route path="security"         element={<Security />} />
+            <Route path="edit-profile"     element={<EditProfile />} />
+            <Route path="2fa"              element={<TwoFA />} />
+            <Route path="chart/:symbol"    element={<Chart />} />
+            <Route path="orders"           element={<Orders />} />
+            <Route path="futures"          element={<Futures />} />
+            <Route path="futures/:symbol"  element={<Futures />} />
+            <Route path="deposit-history"  element={<DepositHistory />} />
             <Route path="deposit-detail/:id" element={<DepositDetail />} />
-            <Route path="support"       element={<Support />} />
+            <Route path="support"          element={<Support />} />
+            <Route path="notifications"    element={<Notifications />} />
           </Route>
 
           <Route path="*" element={<Navigate to="/" />} />
