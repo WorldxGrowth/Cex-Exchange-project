@@ -19,8 +19,17 @@ export default function Login() {
   const [tempToken, setTempToken] = useState('');
   const [otp, setOtp]             = useState(['','','','','','']);
   const otpRefs                   = useRef<(HTMLInputElement|null)[]>([]);
-  const { setUser } = useStore();
+  const { setUser, isLoggedIn } = useStore();
   const navigate = useNavigate();
+
+  // Already logged in → go home
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem('vdexchange-store');
+      const token = JSON.parse(raw || '{}')?.state?.token;
+      if (token || isLoggedIn) navigate('/home', { replace: true });
+    } catch {}
+  }, []);
 
   // Detect email vs phone
   const isPhone = /^\d{5,}$/.test(identifier.replace(/\D/g,''));
