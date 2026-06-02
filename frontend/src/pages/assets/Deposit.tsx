@@ -1,210 +1,110 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { walletAPI, marketAPI } from '../../services/api';
-import { Copy, ChevronRight, ChevronLeft, X, Search, Check } from 'lucide-react';
+import {
+  Copy, ChevronRight, ArrowLeft, Search, Check,
+  ArrowDownToLine, CreditCard, Users, X, Share2
+} from 'lucide-react';
 import { QRCodeSVG } from 'qrcode.react';
 import toast from 'react-hot-toast';
 
-// ================================
-// STEP 1: Entry - On-chain / P2P
-// ================================
-const StepEntry = ({ onOnChain }: any) => (
-  <div style={{ padding: '0 16px 24px' }}>
-    <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--color-text)', marginBottom: 20 }}>
-      Deposit
-    </div>
-
-    {/* On-chain */}
-    <div onClick={onOnChain} style={{
-      padding: '16px', borderRadius: 12, marginBottom: 12,
-      background: 'var(--color-surface2)', border: '1px solid var(--color-border)',
-      cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 14
-    }}>
-      <div style={{ width: 44, height: 44, borderRadius: 12,
-                    background: 'rgba(14,203,129,0.15)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>
-        📥
-      </div>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontWeight: 600, color: 'var(--color-text)', fontSize: 15 }}>
-          On-chain deposit
-        </div>
-        <div style={{ fontSize: 12, color: 'var(--color-muted)', marginTop: 2 }}>
-          Deposit crypto from external wallet or exchange
-        </div>
-      </div>
-      <ChevronRight size={18} color="var(--color-muted)" />
-    </div>
-
-    {/* P2P */}
-    <div style={{
-      padding: '16px', borderRadius: 12,
-      background: 'var(--color-surface2)', border: '1px solid var(--color-border)',
-      display: 'flex', alignItems: 'center', gap: 14, opacity: 0.5
-    }}>
-      <div style={{ width: 44, height: 44, borderRadius: 12,
-                    background: 'rgba(24,144,255,0.15)',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>
-        🔄
-      </div>
-      <div style={{ flex: 1 }}>
-        <div style={{ fontWeight: 600, color: 'var(--color-text)', fontSize: 15,
-                      display: 'flex', alignItems: 'center', gap: 8 }}>
-          P2P Trading
-          <span style={{ padding: '2px 8px', borderRadius: 20, fontSize: 10,
-                         background: 'rgba(240,185,11,0.2)', color: 'var(--color-primary)',
-                         fontWeight: 600 }}>Soon</span>
-        </div>
-        <div style={{ fontSize: 12, color: 'var(--color-muted)', marginTop: 2 }}>
-          Buy crypto with zero fees via P2P
-        </div>
-      </div>
-    </div>
-  </div>
-);
-
-// ================================
-// STEP 2: Coin Select
-// ================================
-const StepCoinSelect = ({ coins, onSelect, onBack }: any) => {
-  const [search, setSearch] = useState('');
-  const filtered = coins.filter((c: any) =>
-    !search || c.symbol.toLowerCase().includes(search.toLowerCase()) ||
-    c.name?.toLowerCase().includes(search.toLowerCase())
-  );
-
+const BottomSheet = ({ open, onClose, children, height = '55vh' }: any) => {
+  if (!open) return null;
   return (
-    <div>
-      {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12,
-                    padding: '12px 16px', borderBottom: '1px solid var(--color-border)' }}>
-        <button onClick={onBack} style={{ background: 'none', border: 'none',
-                 cursor: 'pointer', color: 'var(--color-text)' }}>
-          <ChevronLeft size={22} />
-        </button>
-        <span style={{ fontWeight: 700, fontSize: 16, color: 'var(--color-text)' }}>
-          Select Crypto
-        </span>
-      </div>
-
-      {/* Search */}
-      <div style={{ padding: '12px 16px' }}>
-        <div style={{ position: 'relative' }}>
-          <Search size={15} style={{ position: 'absolute', left: 12, top: '50%',
-                                     transform: 'translateY(-50%)', color: 'var(--color-muted)' }} />
-          <input value={search} onChange={e => setSearch(e.target.value)}
-            placeholder="Search coin..."
-            style={{ width: '100%', padding: '10px 12px 10px 34px', borderRadius: 24,
-                     border: '1px solid var(--color-border)', background: 'var(--color-surface2)',
-                     color: 'var(--color-text)', fontSize: 14, outline: 'none' }} />
+    <div style={{ position: 'fixed', inset: 0, zIndex: 999,
+                  background: 'rgba(0,0,0,0.65)',
+                  display: 'flex', flexDirection: 'column',
+                  justifyContent: 'flex-end' }}
+      onClick={onClose}>
+      <div onClick={e => e.stopPropagation()} style={{
+        background: 'var(--color-surface)', borderRadius: '20px 20px 0 0',
+        height, display: 'flex', flexDirection: 'column', overflow: 'hidden'
+      }}>
+        <div style={{ display: 'flex', justifyContent: 'center',
+                      padding: '12px 0 4px', flexShrink: 0 }}>
+          <div style={{ width: 36, height: 4, borderRadius: 2,
+                        background: 'var(--color-border)' }} />
         </div>
-      </div>
-
-      {/* Trending label */}
-      <div style={{ padding: '4px 16px 8px', fontSize: 12,
-                    color: 'var(--color-muted)', fontWeight: 600 }}>
-        {search ? 'Search Results' : 'All Coins'}
-      </div>
-
-      {/* Coin List */}
-      <div style={{ overflow: 'auto', maxHeight: 'calc(100vh - 200px)' }}>
-        {filtered.map((coin: any) => (
-          <div key={coin.symbol} onClick={() => onSelect(coin)}
-            style={{ display: 'flex', alignItems: 'center', gap: 12,
-                     padding: '14px 16px', cursor: 'pointer',
-                     borderBottom: '1px solid var(--color-border)' }}
-            onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-surface2)')}
-            onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-            {coin.logo_url
-              ? <img src={coin.logo_url} alt=""
-                  style={{ width: 36, height: 36, borderRadius: '50%' }}
-                  onError={(e) => { (e.target as any).style.display = 'none'; }} />
-              : <div style={{ width: 36, height: 36, borderRadius: '50%',
-                              background: 'var(--color-surface2)', display: 'flex',
-                              alignItems: 'center', justifyContent: 'center',
-                              fontWeight: 700, color: 'var(--color-primary)', fontSize: 13 }}>
-                  {coin.symbol?.charAt(0)}
-                </div>
-            }
-            <div style={{ flex: 1 }}>
-              <div style={{ fontWeight: 600, color: 'var(--color-text)', fontSize: 14 }}>
-                {coin.symbol}
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--color-muted)', marginTop: 1 }}>
-                {coin.name}
-              </div>
-            </div>
-            <ChevronRight size={16} color="var(--color-muted)" />
-          </div>
-        ))}
+        {children}
       </div>
     </div>
   );
 };
 
-// ================================
-// STEP 3: Network Select
-// ================================
-const StepNetworkSelect = ({ coin, networks, onSelect, onBack }: any) => (
-  <div>
-    <div style={{ display: 'flex', alignItems: 'center', gap: 12,
-                  padding: '12px 16px', borderBottom: '1px solid var(--color-border)' }}>
-      <button onClick={onBack} style={{ background: 'none', border: 'none',
-               cursor: 'pointer', color: 'var(--color-text)' }}>
-        <ChevronLeft size={22} />
-      </button>
-      <span style={{ fontWeight: 700, fontSize: 16, color: 'var(--color-text)' }}>
-        Select Network
-      </span>
-    </div>
+// Network config with CDN logos
+const NETWORKS = [
+  {
+    id: 'BSC', short: 'BSC',
+    name: 'BNB Smart Chain (BSC)', confirmations: 15,
+    logo: 'https://bin.bnbstatic.com/image/admin_mgs_image_upload/20201110/87496d50-2408-43e1-ad4c-78b47b448a6a.png',
+    color: '#F3BA2F'
+  },
+  {
+    id: 'ETH', short: 'ETH',
+    name: 'Ethereum (ERC20)', confirmations: 20,
+    logo: 'https://bin.bnbstatic.com/image/admin_mgs_image_upload/20201110/3a8c9fe6-2a76-4ace-aa07-415d994de6b5.png',
+    color: '#627EEA'
+  },
+  {
+    id: 'VDCHAIN', short: 'VDCHAIN',
+    name: 'VDChain Network', confirmations: 10,
+    logo: 'https://vdscan.io/favicon.ico',
+    color: '#f0b90b'
+  },
+];
 
-    {/* Warning */}
-    <div style={{ margin: '12px 16px', padding: '12px 14px', borderRadius: 10,
-                  background: 'rgba(240,185,11,0.08)', border: '1px solid rgba(240,185,11,0.2)' }}>
-      <div style={{ fontSize: 12, color: 'var(--color-muted)', lineHeight: 1.5 }}>
-        ⚠️ Only deposit assets of the same type and from the same network. Wrong network = funds lost.
-      </div>
-    </div>
+// Highlighted address — first 6 + last 6 in primary color
+const HighlightedAddress = ({ address }: { address: string }) => {
+  if (!address) return null;
+  const start = address.slice(0, 6);
+  const mid   = address.slice(6, -6);
+  const end   = address.slice(-6);
+  return (
+    <span style={{ fontFamily: 'monospace', fontSize: 13,
+                   wordBreak: 'break-all', lineHeight: 1.7 }}>
+      <span style={{ color: 'var(--color-primary)', fontWeight: 700 }}>{start}</span>
+      <span style={{ color: 'var(--color-text)' }}>{mid}</span>
+      <span style={{ color: 'var(--color-primary)', fontWeight: 700 }}>{end}</span>
+    </span>
+  );
+};
 
-    {/* Column header */}
-    <div style={{ display: 'flex', justifyContent: 'space-between',
-                  padding: '8px 16px', fontSize: 11, color: 'var(--color-muted)' }}>
-      <span>Network</span>
-      <span>Min. deposit</span>
-    </div>
+export default function Deposit() {
+  const navigate = useNavigate();
 
-    {/* Networks */}
-    {networks.map((net: any) => (
-      <div key={net.id} onClick={() => onSelect(net)}
-        style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                 padding: '14px 16px', cursor: 'pointer',
-                 borderTop: '1px solid var(--color-border)',
-                 margin: '0 16px', borderRadius: 12, marginBottom: 8 }}
-        onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-surface2)')}
-        onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
-        <div>
-          <div style={{ fontWeight: 600, color: 'var(--color-text)', fontSize: 14 }}>
-            {net.name}
-          </div>
-          <div style={{ fontSize: 11, color: 'var(--color-success)', marginTop: 3 }}>
-            ~{net.confirmations || 15} confirmations
-          </div>
-        </div>
-        <div style={{ textAlign: 'right' }}>
-          <div style={{ fontSize: 12, color: 'var(--color-muted)' }}>
-            {parseFloat(coin.min_deposit || 0.1).toFixed(2)} {coin.symbol}
-          </div>
-        </div>
-      </div>
-    ))}
-  </div>
-);
+  const [step, setStep]                     = useState<'coin'|'address'>('coin');
+  const [showMethodSheet, setShowMethodSheet] = useState(true);
+  const [showNetworkSheet, setShowNetworkSheet] = useState(false);
+  const [coins, setCoins]                   = useState<any[]>([]);
+  const [selectedCoin, setSelectedCoin]     = useState<any>(null);
+  const [depositInfo, setDepositInfo]       = useState<any>(null);
+  const [loading, setLoading]               = useState(false);
+  const [search, setSearch]                 = useState('');
+  const [copied, setCopied]                 = useState(false);
 
-// ================================
-// STEP 4: QR + Address
-// ================================
-const StepAddress = ({ coin, network, depositInfo, onBack, onChangeCoin }: any) => {
-  const [copied, setCopied] = useState(false);
+  useEffect(() => {
+    marketAPI.getCoins().then((res: any) => {
+      setCoins((res.data || []).filter((c: any) => c.is_deposit));
+    });
+  }, []);
+
+  const filtered = coins.filter((c: any) =>
+    !search ||
+    c.symbol?.toLowerCase().includes(search.toLowerCase()) ||
+    c.name?.toLowerCase().includes(search.toLowerCase())
+  );
+
+  const handleNetworkSelect = async (network: any) => {
+    setShowNetworkSheet(false);
+    setLoading(true);
+    try {
+      const res: any = await walletAPI.getDepositAddress(selectedCoin.symbol, network.short);
+      setDepositInfo({ ...res.data, network_name: network.name });
+      setStep('address');
+    } catch {
+      toast.error('Failed to get address');
+    } finally { setLoading(false); }
+  };
 
   const handleCopy = () => {
     navigator.clipboard.writeText(depositInfo.address);
@@ -214,199 +114,355 @@ const StepAddress = ({ coin, network, depositInfo, onBack, onChangeCoin }: any) 
   };
 
   return (
-    <div>
+    <div style={{ background: 'var(--color-bg)', minHeight: '100vh',
+                  display: 'flex', flexDirection: 'column' }}>
+
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    padding: '12px 16px', borderBottom: '1px solid var(--color-border)' }}>
-        <button onClick={onBack} style={{ background: 'none', border: 'none',
-                 cursor: 'pointer', color: 'var(--color-text)' }}>
-          <ChevronLeft size={22} />
-        </button>
-        <span style={{ fontWeight: 700, fontSize: 16, color: 'var(--color-text)' }}>Deposit</span>
-        <div style={{ width: 22 }} />
-      </div>
-
-      <div style={{ padding: '20px 16px' }}>
-        {/* Coin selector at top */}
-        <div onClick={onChangeCoin} style={{
-          display: 'inline-flex', alignItems: 'center', gap: 8, cursor: 'pointer',
-          padding: '6px 14px', borderRadius: 24,
-          border: '1px solid var(--color-border)',
-          marginBottom: 20
-        }}>
-          {coin.logo_url && (
-            <img src={coin.logo_url} alt=""
-              style={{ width: 22, height: 22, borderRadius: '50%' }} />
-          )}
-          <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--color-text)' }}>
-            {coin.symbol}
-          </span>
-          <ChevronRight size={14} color="var(--color-muted)" />
-        </div>
-
-        {/* QR Code */}
-        <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 24 }}>
-          <div style={{ padding: 16, background: '#fff', borderRadius: 16,
-                        boxShadow: '0 4px 20px rgba(0,0,0,0.15)' }}>
-            <QRCodeSVG
-              value={depositInfo.address}
-              size={160}
-              level="M"
-              includeMargin={false}
-            />
-          </div>
-        </div>
-
-        {/* Network */}
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 12, color: 'var(--color-muted)', marginBottom: 6 }}>Network</div>
-          <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--color-text)' }}>
-            {depositInfo.network_name}
-          </div>
-        </div>
-
-        {/* Address */}
-        <div style={{ marginBottom: 20 }}>
-          <div style={{ fontSize: 12, color: 'var(--color-muted)', marginBottom: 6 }}>
-            Deposit Address
-          </div>
-          <div style={{ padding: '12px 14px', borderRadius: 12,
-                        background: 'var(--color-surface2)',
-                        border: '1px solid var(--color-border)',
-                        fontSize: 13, color: 'var(--color-text)',
-                        wordBreak: 'break-all', lineHeight: 1.6,
-                        fontFamily: 'monospace' }}>
-            {depositInfo.address}
-          </div>
-        </div>
-
-        {/* Info rows */}
-        {[
-          { label: 'Min. deposit amount', value: `${parseFloat(depositInfo.min_deposit || 0.1).toFixed(4)} ${depositInfo.coin}` },
-          { label: 'Confirmations', value: `${depositInfo.confirmations} confirmations` },
-          { label: 'Contract address', value: depositInfo.contract_address ? `...${depositInfo.contract_address.slice(-8)}` : 'Native' },
-        ].map(({ label, value }) => (
-          <div key={label} style={{ display: 'flex', justifyContent: 'space-between',
-                                    padding: '8px 0', borderBottom: '1px solid var(--color-border)',
-                                    fontSize: 13 }}>
-            <span style={{ color: 'var(--color-muted)' }}>{label}</span>
-            <span style={{ color: 'var(--color-text)', fontWeight: 500 }}>{value}</span>
-          </div>
-        ))}
-
-        {/* Copy + Share buttons */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 20 }}>
-          <button onClick={() => {
-            if (navigator.share) {
-              navigator.share({ title: 'Deposit Address', text: depositInfo.address });
-            } else {
-              handleCopy();
-            }
-          }} style={{
-            padding: '13px', borderRadius: 10,
-            background: 'var(--color-surface2)',
-            border: '1px solid var(--color-border)',
-            color: 'var(--color-text)', fontWeight: 600, cursor: 'pointer', fontSize: 14
-          }}>
-            Share
-          </button>
-          <button onClick={handleCopy} style={{
-            padding: '13px', borderRadius: 10,
-            background: copied ? 'var(--color-success)' : 'var(--color-text)',
-            border: 'none', color: copied ? '#fff' : 'var(--color-bg)',
-            fontWeight: 700, cursor: 'pointer', fontSize: 14,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
-          }}>
-            {copied ? <><Check size={16} /> Copied!</> : <><Copy size={16} /> Copy address</>}
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-// ================================
-// MAIN DEPOSIT PAGE
-// ================================
-export default function Deposit() {
-  const navigate = useNavigate();
-  const [step, setStep] = useState<'entry' | 'coin' | 'network' | 'address'>('entry');
-  const [coins, setCoins] = useState<any[]>([]);
-  const [selectedCoin, setSelectedCoin] = useState<any>(null);
-  const [selectedNetwork, setSelectedNetwork] = useState<any>(null);
-  const [depositInfo, setDepositInfo] = useState<any>(null);
-  const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    marketAPI.getCoins().then((res: any) => {
-      setCoins((res.data || []).filter((c: any) => c.is_deposit));
-    });
-  }, []);
-
-  const handleCoinSelect = (coin: any) => {
-    setSelectedCoin(coin);
-    setStep('network');
-  };
-
-  const handleNetworkSelect = async (network: any) => {
-    setSelectedNetwork(network);
-    setLoading(true);
-    try {
-      const res: any = await walletAPI.getDepositAddress(selectedCoin.symbol, network.short_name || "BSC");
-      setDepositInfo(res.data);
-      setStep('address');
-    } catch (err: any) {
-      toast.error('Failed to get address');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  // Networks for selected coin (from coins data)
-  const coinNetworks = selectedCoin ? [
-    { id: selectedCoin.network_id, name: selectedCoin.network_name || selectedCoin.network,
-      short_name: selectedCoin.network || "BSC",
-      confirmations: selectedCoin.confirmations || 15 }
-  ] : [];
-
-  return (
-    <div style={{ background: 'var(--color-bg)', minHeight: '100vh' }}>
-      {/* Top bar */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
-                    background: 'var(--color-surface)',
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '0 16px', height: 56, flexShrink: 0,
                     borderBottom: '1px solid var(--color-border)' }}>
-        <button onClick={() => step === 'entry' ? navigate(-1) : setStep('entry')}
-          style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--color-text)' }}>
-          <ChevronLeft size={22} />
+        <button onClick={() => step === 'address' ? setStep('coin') : navigate(-1)}
+          style={{ background: 'none', border: 'none', cursor: 'pointer',
+                   color: 'var(--color-text)', display: 'flex' }}>
+          <ArrowLeft size={22} />
         </button>
-        <span style={{ fontWeight: 700, fontSize: 17, color: 'var(--color-text)' }}>
-          {step === 'entry' ? 'Deposit' : step === 'coin' ? 'Select Crypto' :
-           step === 'network' ? 'Select Network' : 'Deposit Address'}
+        <span style={{ fontWeight: 700, fontSize: 17 }}>
+          {step === 'coin' ? 'Select Crypto' : 'Deposit'}
         </span>
       </div>
 
-      {loading ? (
-        <div style={{ textAlign: 'center', padding: 60, color: 'var(--color-muted)' }}>
-          Loading...
+      {/* ── METHOD SHEET ── */}
+      <BottomSheet open={showMethodSheet && step === 'coin'}
+        onClose={() => setShowMethodSheet(false)} height="52vh">
+        <div style={{ padding: '8px 20px 20px', flex: 1 }}>
+          <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 20,
+                        textAlign: 'center' }}>
+            Select Deposit Method
+          </div>
+
+          {[
+            {
+              icon: <ArrowDownToLine size={22} color="var(--color-success)" />,
+              bg: '#0ecb8118', label: 'Deposit Crypto',
+              sub: 'From external wallet or exchange',
+              onClick: () => setShowMethodSheet(false), opacity: 1
+            },
+            {
+              icon: <CreditCard size={22} color="#1890ff" />,
+              bg: '#1890ff18', label: 'Buy with Card',
+              sub: 'Pay with credit/debit card', badge: 'Soon',
+              onClick: () => toast('Coming Soon'), opacity: 1
+            },
+            {
+              icon: <Users size={22} color="#722ed1" />,
+              bg: '#722ed118', label: 'P2P Trading',
+              sub: 'Buy directly from users', badge: 'Soon',
+              onClick: () => toast('Coming Soon'), opacity: 0.55
+            },
+          ].map((item, i) => (
+            <div key={i} onClick={item.onClick} style={{
+              padding: '16px', borderRadius: 14, marginBottom: 10,
+              background: 'var(--color-surface2)',
+              border: '1px solid var(--color-border)',
+              cursor: 'pointer', display: 'flex', alignItems: 'center',
+              gap: 14, opacity: item.opacity
+            }}>
+              <div style={{ width: 46, height: 46, borderRadius: 14,
+                            background: item.bg, flexShrink: 0,
+                            display: 'flex', alignItems: 'center',
+                            justifyContent: 'center' }}>
+                {item.icon}
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <span style={{ fontWeight: 700, fontSize: 15 }}>{item.label}</span>
+                  {item.badge && (
+                    <span style={{ padding: '2px 7px', borderRadius: 20, fontSize: 10,
+                                   background: '#f0b90b20', color: 'var(--color-primary)',
+                                   fontWeight: 700 }}>{item.badge}</span>
+                  )}
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--color-muted)', marginTop: 3 }}>
+                  {item.sub}
+                </div>
+              </div>
+              <ChevronRight size={16} color="var(--color-muted)" />
+            </div>
+          ))}
         </div>
-      ) : (
-        <>
-          {step === 'entry' && <StepEntry onOnChain={() => setStep('coin')} />}
-          {step === 'coin' && (
-            <StepCoinSelect coins={coins} onSelect={handleCoinSelect} onBack={() => setStep('entry')} />
-          )}
-          {step === 'network' && selectedCoin && (
-            <StepNetworkSelect
-              coin={selectedCoin} networks={coinNetworks}
-              onSelect={handleNetworkSelect} onBack={() => setStep('coin')} />
-          )}
-          {step === 'address' && depositInfo && (
-            <StepAddress
-              coin={selectedCoin} network={selectedNetwork} depositInfo={depositInfo}
-              onBack={() => setStep('network')}
-              onChangeCoin={() => setStep('coin')} />
-          )}
-        </>
+      </BottomSheet>
+
+      {/* ── COIN SELECT ── */}
+      {step === 'coin' && !showMethodSheet && (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column',
+                      overflow: 'hidden' }}>
+
+          {/* Sticky search */}
+          <div style={{ padding: '12px 16px', flexShrink: 0,
+                        background: 'var(--color-bg)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10,
+                          background: 'var(--color-surface)', borderRadius: 24,
+                          padding: '11px 16px',
+                          border: '1px solid var(--color-border)' }}>
+              <Search size={15} color="var(--color-muted)" />
+              <input value={search} onChange={e => setSearch(e.target.value)}
+                placeholder="Search coin..."
+                style={{ flex: 1, background: 'none', border: 'none',
+                         color: 'var(--color-text)', fontSize: 15,
+                         outline: 'none' }} autoFocus />
+              {search && (
+                <button onClick={() => setSearch('')} style={{
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'var(--color-muted)', display: 'flex'
+                }}>
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Sticky label */}
+          <div style={{ padding: '4px 16px 8px', fontSize: 13, flexShrink: 0,
+                        color: 'var(--color-muted)', fontWeight: 600,
+                        background: 'var(--color-bg)' }}>
+            {search ? 'Search Results' : 'All Coins'}
+          </div>
+
+          {/* Scrollable list only */}
+          <div style={{ flex: 1, overflowY: 'auto' }}>
+            {filtered.map((coin: any) => (
+              <div key={coin.symbol}
+                onClick={() => { setSelectedCoin(coin); setShowNetworkSheet(true); }}
+                style={{ display: 'flex', alignItems: 'center', gap: 12,
+                         padding: '14px 16px', cursor: 'pointer',
+                         borderBottom: '1px solid var(--color-border)' }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-surface)')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}>
+                {coin.logo_url
+                  ? <img src={coin.logo_url} alt=""
+                      style={{ width: 40, height: 40, borderRadius: '50%' }}
+                      onError={(e) => { (e.target as any).style.display = 'none'; }} />
+                  : <div style={{ width: 40, height: 40, borderRadius: '50%',
+                                  background: 'var(--color-surface)', display: 'flex',
+                                  alignItems: 'center', justifyContent: 'center',
+                                  fontWeight: 800, color: 'var(--color-primary)', fontSize: 15 }}>
+                      {coin.symbol?.charAt(0)}
+                    </div>
+                }
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15,
+                                color: 'var(--color-text)' }}>{coin.symbol}</div>
+                  <div style={{ fontSize: 12, color: 'var(--color-muted)', marginTop: 2 }}>
+                    {coin.name}
+                  </div>
+                </div>
+                <ChevronRight size={16} color="var(--color-muted)" />
+              </div>
+            ))}
+            {filtered.length === 0 && (
+              <div style={{ textAlign: 'center', padding: 40,
+                            color: 'var(--color-muted)', fontSize: 14 }}>
+                No coins found
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* ── NETWORK SHEET ── */}
+      <BottomSheet open={showNetworkSheet}
+        onClose={() => setShowNetworkSheet(false)} height="58vh">
+        <div style={{ display: 'flex', alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '8px 20px 14px', flexShrink: 0 }}>
+          <span style={{ fontWeight: 700, fontSize: 17 }}>Select Network</span>
+          <button onClick={() => setShowNetworkSheet(false)} style={{
+            background: 'var(--color-surface2)', border: 'none', cursor: 'pointer',
+            borderRadius: '50%', width: 30, height: 30,
+            display: 'flex', alignItems: 'center', justifyContent: 'center'
+          }}>
+            <X size={16} color="var(--color-muted)" />
+          </button>
+        </div>
+
+        <div style={{ margin: '0 16px 14px', padding: '10px 14px', borderRadius: 10,
+                      background: '#f0b90b10', border: '1px solid #f0b90b25',
+                      fontSize: 12, color: 'var(--color-muted)', lineHeight: 1.5,
+                      flexShrink: 0 }}>
+          Only send assets on the selected network. Wrong network = funds lost permanently.
+        </div>
+
+        <div style={{ flex: 1, overflowY: 'auto', padding: '0 16px 20px' }}>
+          {NETWORKS.map((net) => (
+            <div key={net.id} onClick={() => handleNetworkSelect(net)}
+              style={{ display: 'flex', alignItems: 'center', gap: 12,
+                       padding: '14px 16px', borderRadius: 14, marginBottom: 10,
+                       background: 'var(--color-surface2)',
+                       border: '1px solid var(--color-border)', cursor: 'pointer',
+                       transition: 'border-color 0.2s' }}
+              onMouseEnter={e => (e.currentTarget.style.borderColor = net.color)}
+              onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--color-border)')}>
+
+              {/* Network logo */}
+              <div style={{ width: 42, height: 42, borderRadius: '50%',
+                            background: net.color + '20', flexShrink: 0,
+                            display: 'flex', alignItems: 'center',
+                            justifyContent: 'center', overflow: 'hidden' }}>
+                <img src={net.logo} alt={net.short}
+                  style={{ width: 42, height: 42, borderRadius: '50%',
+                           objectFit: 'cover' }}
+                  onError={(e) => {
+                    (e.target as any).style.display = 'none';
+                    (e.target as any).parentElement.innerHTML =
+                      `<span style="font-weight:800;color:${net.color};font-size:14px">${net.short}</span>`;
+                  }} />
+              </div>
+
+              <div style={{ flex: 1 }}>
+                <div style={{ fontWeight: 700, fontSize: 15,
+                              color: 'var(--color-text)' }}>{net.name}</div>
+                <div style={{ fontSize: 12, color: 'var(--color-success)', marginTop: 3 }}>
+                  ~{net.confirmations} confirmations
+                </div>
+              </div>
+              <ChevronRight size={16} color="var(--color-muted)" />
+            </div>
+          ))}
+        </div>
+      </BottomSheet>
+
+      {/* ── ADDRESS PAGE ── */}
+      {step === 'address' && depositInfo && !loading && (
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column',
+                      padding: '20px 20px 28px' }}>
+
+          {/* Coin selector */}
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
+            <button onClick={() => { setStep('coin'); setShowNetworkSheet(false); }}
+              style={{ display: 'flex', alignItems: 'center', gap: 8,
+                       background: 'var(--color-surface)',
+                       border: '1px solid var(--color-border)',
+                       borderRadius: 24, padding: '8px 16px', cursor: 'pointer' }}>
+              {selectedCoin?.logo_url && (
+                <img src={selectedCoin.logo_url} alt=""
+                  style={{ width: 22, height: 22, borderRadius: '50%' }} />
+              )}
+              <span style={{ fontWeight: 700, fontSize: 15, color: 'var(--color-text)' }}>
+                {selectedCoin?.symbol}
+              </span>
+              <ChevronRight size={14} color="var(--color-muted)" />
+            </button>
+          </div>
+
+          {/* QR code */}
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 20 }}>
+            <div style={{ padding: 14, background: '#fff', borderRadius: 18,
+                          boxShadow: '0 4px 24px rgba(0,0,0,0.25)' }}>
+              <QRCodeSVG value={depositInfo.address} size={150} level="M" />
+            </div>
+          </div>
+
+          {/* Network */}
+          <div style={{ marginBottom: 12 }}>
+            <div style={{ fontSize: 12, color: 'var(--color-muted)', marginBottom: 3 }}>
+              Network
+            </div>
+            <div style={{ fontWeight: 700, fontSize: 16, color: 'var(--color-text)' }}>
+              {depositInfo.network_name}
+            </div>
+          </div>
+
+          {/* Address with inline copy */}
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontSize: 12, color: 'var(--color-muted)', marginBottom: 6 }}>
+              Deposit address
+            </div>
+            <div style={{ padding: '12px 14px', borderRadius: 12,
+                          background: 'var(--color-surface)',
+                          border: '1px solid var(--color-border)',
+                          display: 'flex', alignItems: 'flex-start',
+                          gap: 10 }}>
+              <div style={{ flex: 1 }}>
+                <HighlightedAddress address={depositInfo.address} />
+              </div>
+              {/* Inline copy button */}
+              <button onClick={handleCopy} style={{
+                background: copied ? 'var(--color-success)' : 'var(--color-surface2)',
+                border: 'none', cursor: 'pointer', borderRadius: 10,
+                width: 36, height: 36, flexShrink: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                transition: 'background 0.2s'
+              }}>
+                {copied
+                  ? <Check size={16} color="#fff" />
+                  : <Copy size={16} color="var(--color-muted)" />
+                }
+              </button>
+            </div>
+          </div>
+
+          {/* Info rows */}
+          <div style={{ flex: 1 }}>
+            {[
+              { label: 'Min. deposit amount',
+                value: `${parseFloat(depositInfo.min_deposit || 0.1).toFixed(4)} ${depositInfo.coin || selectedCoin?.symbol}` },
+              { label: 'Confirmations',
+                value: `${depositInfo.confirmations || 15} confirmations` },
+              { label: 'Contract address',
+                value: depositInfo.contract_address
+                  ? `ends with ${depositInfo.contract_address.slice(-6)}`
+                  : 'Native' },
+            ].map(({ label, value }) => (
+              <div key={label} style={{ display: 'flex', justifyContent: 'space-between',
+                                        padding: '9px 0',
+                                        borderBottom: '1px solid var(--color-border)',
+                                        fontSize: 13 }}>
+                <span style={{ color: 'var(--color-muted)' }}>{label}</span>
+                <span style={{ color: 'var(--color-text)', fontWeight: 600 }}>{value}</span>
+              </div>
+            ))}
+          </div>
+
+          {/* Share + Copy buttons */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr',
+                        gap: 12, marginTop: 20 }}>
+            <button onClick={() => {
+              if (navigator.share) {
+                navigator.share({ title: 'Deposit Address', text: depositInfo.address });
+              } else { handleCopy(); }
+            }} style={{
+              padding: '15px', borderRadius: 50,
+              background: 'var(--color-surface)',
+              border: '1px solid var(--color-border)',
+              color: 'var(--color-text)', fontWeight: 700,
+              cursor: 'pointer', fontSize: 15,
+              display: 'flex', alignItems: 'center',
+              justifyContent: 'center', gap: 6
+            }}>
+              <Share2 size={16} /> Share
+            </button>
+            <button onClick={handleCopy} style={{
+              padding: '15px', borderRadius: 50, border: 'none',
+              background: copied ? 'var(--color-success)' : '#fff',
+              color: copied ? '#fff' : '#000',
+              fontWeight: 700, cursor: 'pointer', fontSize: 15,
+              display: 'flex', alignItems: 'center',
+              justifyContent: 'center', gap: 6
+            }}>
+              {copied
+                ? <><Check size={16} /> Copied!</>
+                : <><Copy size={16} /> Copy address</>
+              }
+            </button>
+          </div>
+        </div>
+      )}
+
+      {loading && (
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center',
+                      justifyContent: 'center', color: 'var(--color-muted)' }}>
+          Getting address...
+        </div>
       )}
     </div>
   );

@@ -27,7 +27,8 @@ export default function MainLayout() {
     path.startsWith('/chart')      ||
     path.startsWith('/deposit-history') ||
     path.startsWith('/deposit-detail') ||
-    path.startsWith('/more');
+    path.startsWith('/more')      ||
+    path.startsWith('/markets');
 
   return (
     <div style={{ background: 'var(--color-bg)', minHeight: '100vh' }}>
