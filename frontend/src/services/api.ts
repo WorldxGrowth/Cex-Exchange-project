@@ -63,6 +63,8 @@ export const walletAPI = {
   getWithdrawalHistory: ()           => api.get('/withdrawal/history'),
   withdraw:            (d: any)      => api.post('/wallet/withdraw', d),
   getWithdrawals:      ()            => api.get('/wallet/withdrawals'),
+  sendWithdrawalOTP:   ()            => api.post('/withdrawal/send-otp', {}),
+  getWithdrawHistory:  ()            => api.get('/withdrawal/history'),
   transfer:            (d: any)      => api.post('/wallet/transfer', d),
   getTransactions:     ()            => api.get('/wallet/transactions'),
 };
@@ -94,6 +96,13 @@ export const notifAPI = {
   getBanners:       (platform = 'web') => api.get(`/notifications/banners?platform=${platform}`),
   getPopups:        (platform = 'web') => api.get(`/notifications/popups?platform=${platform}`),
   getAnnouncements: ()                => api.get('/notifications/announcements'),
+};
+
+export const transferAPI = {
+  between:  (d: any)        => api.post('/transfer/accounts', d),
+  internal: (d: any)        => api.post('/transfer/internal', d),
+  lookup:   (identifier: string) => api.get(`/transfer/lookup?identifier=${identifier}`),
+  history:  ()              => api.get('/transfer/history'),
 };
 
 export const referralAPI = {

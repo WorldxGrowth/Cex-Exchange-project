@@ -62,6 +62,7 @@ app.use('/api/v1/withdrawal',    require('./src/routes/withdrawal.routes'));
 app.use('/api/v1/deposit',       require('./src/routes/deposit.routes'));
 app.use('/api/v1/orders',        require('./src/routes/order.routes'));
 app.use('/api/v1/wallet',        require('./src/routes/wallet.routes'));
+app.use('/api/v1/transfer',      require('./src/routes/transfer.routes'));
 app.use('/api/v1/market',        require('./src/routes/market.routes'));
 app.use('/api/v1/webhook',       require('./src/routes/webhook.routes'));
 

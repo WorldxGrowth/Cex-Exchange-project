@@ -8,22 +8,17 @@ const ERC20_ABI = [
   'function balanceOf(address) view returns (uint256)'
 ];
 
-// Email helper - always safe
 const sendEmailSafe = async (fn, ...args) => {
   try {
     const emailService = require('../services/email/emailService');
     await emailService[fn](...args);
-  } catch (e) {
-    console.error(`Email ${fn} failed:`, e.message);
-  }
+  } catch (e) { console.error(`Email ${fn} failed:`, e.message); }
 };
 
-// ── Phase 1: Coin withdraw control check ──────────
 const checkWithdrawAllowed = async (coinSymbol) => {
   const res = await db.query(`
     SELECT is_withdraw, maintenance_mode,
-           withdraw_disabled_reason, withdraw_notice,
-           withdraw_enabled_at
+           withdraw_disabled_reason, withdraw_notice, withdraw_enabled_at
     FROM coins WHERE symbol = $1 AND is_active = true
   `, [coinSymbol.toUpperCase()]);
 
@@ -32,41 +27,25 @@ const checkWithdrawAllowed = async (coinSymbol) => {
 
   if (c.maintenance_mode)
     return { allowed: false, reason: c.withdraw_notice || `${coinSymbol} is under maintenance` };
-
   if (!c.is_withdraw)
     return { allowed: false, reason: c.withdraw_disabled_reason || `Withdrawals disabled for ${coinSymbol}` };
-
   if (c.withdraw_enabled_at && new Date(c.withdraw_enabled_at) > new Date())
     return { allowed: false, reason: c.withdraw_notice || `Withdrawals for ${coinSymbol} available at ${new Date(c.withdraw_enabled_at).toUTCString()}` };
 
   return { allowed: true };
 };
 
-// ── Dynamic fee calculator ─────────────────────────
-// fixed_usd:  fee_qty = fee_fixed / coin_price  (e.g. $1 USDT fee → ETH qty at current price)
-// fixed_qty:  fee_qty = fee_fixed               (e.g. 0.001 BNB direct)
 const calculateFee = async (coinId, feeFixed, feeType) => {
-  if (feeType === 'fixed_qty') {
-    return parseFloat(feeFixed);
-  }
-
-  // fixed_usd: live price se qty nikalo
+  if (feeType === 'fixed_qty') return parseFloat(feeFixed);
   const priceRes = await db.query(
     'SELECT price_usdt FROM price_feeds WHERE coin_id = $1', [coinId]
   );
   const price = parseFloat(priceRes.rows[0]?.price_usdt || 0);
-
-  if (price <= 0) {
-    // Price nahi mila to fixed_qty fallback
-    console.warn(`[Fee] No price for coin ${coinId}, using fixed_qty fallback`);
-    return parseFloat(feeFixed);
-  }
-
-  const feeQty = parseFloat(feeFixed) / price;
-  return parseFloat(feeQty.toFixed(8));
+  if (price <= 0) { console.warn(`[Fee] No price for coin ${coinId}`); return parseFloat(feeFixed); }
+  return parseFloat((parseFloat(feeFixed) / price).toFixed(8));
 };
 
-// Get withdrawal settings + balance for a coin
+// ── GET WITHDRAW INFO ─────────────────────────────
 const getWithdrawInfo = async (req, res) => {
   try {
     const { coin } = req.query;
@@ -80,8 +59,7 @@ const getWithdrawInfo = async (req, res) => {
              c.contract_address, c.is_withdraw,
              n.short_name as network, n.name as network_name,
              ws.min_amount, ws.max_amount, ws.fee_fixed,
-             ws.fee_percent, ws.auto_approve_limit, ws.is_enabled,
-             ws.fee_type,
+             ws.fee_percent, ws.auto_approve_limit, ws.is_enabled, ws.fee_type,
              COALESCE(pf.price_usdt, 0) as price_usdt,
              b.available
       FROM coins c
@@ -95,12 +73,13 @@ const getWithdrawInfo = async (req, res) => {
 
     if (!result.rows[0]) return error(res, 'Coin not found');
     const info = result.rows[0];
-
     if (!info.is_enabled) return error(res, 'Withdrawals disabled for this coin');
 
-    // Dynamic fee calculation for display
-    const feeQty = await calculateFee(
-      info.id, info.fee_fixed, info.fee_type || 'fixed_qty'
+    const feeQty = await calculateFee(info.id, info.fee_fixed, info.fee_type || 'fixed_qty');
+
+    // Check 2FA enabled
+    const twofa = await db.query(
+      'SELECT is_enabled FROM two_factor_auth WHERE user_id = $1', [req.user.id]
     );
 
     return success(res, {
@@ -114,12 +93,13 @@ const getWithdrawInfo = async (req, res) => {
       max_amount:         parseFloat(info.max_amount || 100000),
       fee_type:           info.fee_type || 'fixed_qty',
       fee_fixed:          parseFloat(info.fee_fixed || 0),
-      fee_qty:            feeQty,           // actual qty deducted
+      fee_qty:            feeQty,
       fee_usd:            info.fee_type === 'fixed_usd'
                             ? parseFloat(info.fee_fixed)
                             : feeQty * parseFloat(info.price_usdt),
       price_usdt:         parseFloat(info.price_usdt || 0),
       auto_approve_limit: parseFloat(info.auto_approve_limit || 100),
+      two_fa_enabled:     twofa.rows[0]?.is_enabled || false,
     });
   } catch (err) {
     console.error('getWithdrawInfo:', err.message);
@@ -127,13 +107,33 @@ const getWithdrawInfo = async (req, res) => {
   }
 };
 
-// Request withdrawal
+// ── SEND WITHDRAWAL OTP ───────────────────────────
+const sendWithdrawalOTP = async (req, res) => {
+  try {
+    const user = await db.query(
+      'SELECT id, email FROM users WHERE id = $1', [req.user.id]
+    );
+    if (!user.rows[0]) return error(res, 'User not found');
+
+    const otpService = require('../services/otpService');
+    const result = await otpService.sendOTP(user.rows[0].email, 'withdrawal');
+
+    if (!result.ok) return error(res, result.error || 'Failed to send OTP');
+
+    return success(res, {}, 'OTP sent to your email');
+  } catch (err) {
+    console.error('sendWithdrawalOTP:', err.message);
+    return error(res, 'Failed', 500);
+  }
+};
+
+// ── REQUEST WITHDRAWAL (with OTP + 2FA verify) ───
 const requestWithdrawal = async (req, res) => {
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
 
-    const { coin, network, amount, address } = req.body;
+    const { coin, network, amount, address, email_otp, totp_code } = req.body;
 
     if (!coin || !amount || !address)
       return error(res, 'coin, amount, address required');
@@ -144,12 +144,46 @@ const requestWithdrawal = async (req, res) => {
     if (!ethers.utils.isAddress(address))
       return error(res, 'Invalid wallet address');
 
-    // Phase 1 check
-    const check = await checkWithdrawAllowed(coin);
-    if (!check.allowed) {
+    // ── Email OTP verify ──────────────────────────
+    if (!email_otp) return error(res, 'Email OTP required');
+
+    const userRow = await db.query(
+      'SELECT id, email FROM users WHERE id = $1', [req.user.id]
+    );
+    const userEmail = userRow.rows[0]?.email;
+
+    const otpService = require('../services/otpService');
+    const otpResult  = await otpService.verifyOTP(userEmail, email_otp, 'withdrawal');
+    if (!otpResult.ok) {
       await client.query('ROLLBACK');
-      return error(res, check.reason);
+      return error(res, otpResult.error || 'Invalid email OTP');
     }
+
+    // ── 2FA verify (if enabled) ───────────────────
+    const twofa = await db.query(
+      'SELECT is_enabled, secret FROM two_factor_auth WHERE user_id = $1', [req.user.id]
+    );
+    if (twofa.rows[0]?.is_enabled) {
+      if (!totp_code) {
+        await client.query('ROLLBACK');
+        return error(res, '2FA code required');
+      }
+      const speakeasy = require('speakeasy');
+      const valid = speakeasy.totp.verify({
+        secret: twofa.rows[0].secret,
+        encoding: 'base32',
+        token: totp_code,
+        window: 1
+      });
+      if (!valid) {
+        await client.query('ROLLBACK');
+        return error(res, 'Invalid 2FA code');
+      }
+    }
+
+    // ── Phase 1 check ──────────────────────────────
+    const check = await checkWithdrawAllowed(coin);
+    if (!check.allowed) { await client.query('ROLLBACK'); return error(res, check.reason); }
 
     const coinData = await client.query(`
       SELECT c.id as coin_id, c.symbol, c.decimals, c.contract_address,
@@ -173,17 +207,12 @@ const requestWithdrawal = async (req, res) => {
     if (amt > parseFloat(c.max_amount))
       return error(res, `Max withdrawal: ${c.max_amount} ${coin}`);
 
-    // ── Dynamic fee calculation ────────────────────
-    const feeQty = await calculateFee(
-      c.coin_id, c.fee_fixed, c.fee_type || 'fixed_qty'
-    );
-
+    const feeQty     = await calculateFee(c.coin_id, c.fee_fixed, c.fee_type || 'fixed_qty');
     const totalDeduct = amt + feeQty;
     const receiveAmt  = amt;
 
-    console.log(`[Withdraw] ${coin}: amt=${amt} fee=${feeQty} (${c.fee_type}) total=${totalDeduct}`);
+    console.log(`[Withdraw] ${coin}: amt=${amt} fee=${feeQty} total=${totalDeduct}`);
 
-    // Balance check
     const balance = await client.query(`
       SELECT available FROM balances
       WHERE user_id = $1 AND coin_id = $2 AND account_type = 'spot'
@@ -194,7 +223,6 @@ const requestWithdrawal = async (req, res) => {
     if (available < totalDeduct)
       return error(res, `Insufficient balance. Need: ${totalDeduct.toFixed(6)} ${coin}, Available: ${available.toFixed(6)}`);
 
-    // Deduct balance
     await client.query(`
       UPDATE balances SET available = available - $1, updated_at = NOW()
       WHERE user_id = $2 AND coin_id = $3 AND account_type = 'spot'
@@ -207,11 +235,12 @@ const requestWithdrawal = async (req, res) => {
     const withdrawal = await client.query(`
       INSERT INTO withdrawals
         (user_id, coin_id, network_id, tx_id, to_address,
-         amount, fee, receive_amount, status, created_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+         amount, fee, receive_amount, status, two_fa_verified, created_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
       RETURNING *
     `, [req.user.id, c.coin_id, c.network_id, txId,
-        address, amt, feeQty, receiveAmt, status]);
+        address, amt, feeQty, receiveAmt, status,
+        twofa.rows[0]?.is_enabled || false]);
 
     await client.query(`
       INSERT INTO ledger (user_id, coin_id, type, amount,
@@ -224,7 +253,6 @@ const requestWithdrawal = async (req, res) => {
 
     await client.query('COMMIT');
 
-    // Email async
     db.query('SELECT email FROM users WHERE id = $1', [req.user.id])
       .then(u => {
         if (u.rows[0]) {
@@ -236,7 +264,6 @@ const requestWithdrawal = async (req, res) => {
         }
       }).catch(() => {});
 
-    // Auto process
     if (status === 'processing') {
       processWithdrawal(withdrawal.rows[0].id).catch(err => {
         console.error('Auto process error:', err.message);
@@ -244,32 +271,23 @@ const requestWithdrawal = async (req, res) => {
     }
 
     return success(res, {
-      tx_id:          txId,
-      amount:         amt,
-      fee:            feeQty,
-      fee_type:       c.fee_type,
-      receive_amount: receiveAmt,
-      status,
-      message: status === 'processing'
-        ? 'Processing automatically'
-        : 'Pending admin approval'
+      tx_id: txId, amount: amt, fee: feeQty,
+      fee_type: c.fee_type, receive_amount: receiveAmt, status,
+      message: status === 'processing' ? 'Processing automatically' : 'Pending admin approval'
     }, 'Withdrawal request submitted');
 
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('requestWithdrawal:', err.message);
     return error(res, err.message || 'Failed', 500);
-  } finally {
-    client.release();
-  }
+  } finally { client.release(); }
 };
 
-// Process withdrawal on blockchain (unchanged)
+// ── PROCESS WITHDRAWAL ────────────────────────────
 const processWithdrawal = async (withdrawalId) => {
   const client = await db.pool.connect();
   try {
     await client.query('BEGIN');
-
     const wd = await client.query(`
       SELECT w.*, c.symbol, c.decimals, c.contract_address,
              n.rpc_url, n.short_name as network
@@ -306,9 +324,8 @@ const processWithdrawal = async (withdrawalId) => {
     }
 
     await client.query(`
-      UPDATE withdrawals SET status = 'completed', txhash = $1,
-        processed_at = NOW(), updated_at = NOW()
-      WHERE id = $2
+      UPDATE withdrawals SET status='completed', txhash=$1,
+        processed_at=NOW(), updated_at=NOW() WHERE id=$2
     `, [txHash, withdrawalId]);
 
     await client.query('COMMIT');
@@ -316,25 +333,20 @@ const processWithdrawal = async (withdrawalId) => {
 
     db.query('SELECT email FROM users WHERE id = $1', [w.user_id])
       .then(u => {
-        if (u.rows[0]) {
-          sendEmailSafe('sendWithdrawalEmail', u.rows[0], { ...w, txhash: txHash });
-        }
+        if (u.rows[0]) sendEmailSafe('sendWithdrawalEmail', u.rows[0], { ...w, txhash: txHash });
       }).catch(() => {});
 
   } catch (err) {
     await client.query('ROLLBACK');
     await db.query(`
-      UPDATE withdrawals SET status = 'failed',
-        updated_at = NOW(), notes = $1 WHERE id = $2
+      UPDATE withdrawals SET status='failed', updated_at=NOW(), notes=$1 WHERE id=$2
     `, [err.message, withdrawalId]).catch(() => {});
     console.error('processWithdrawal error:', err.message);
     throw err;
-  } finally {
-    client.release();
-  }
+  } finally { client.release(); }
 };
 
-// Get withdrawal history (unchanged)
+// ── WITHDRAWAL HISTORY ────────────────────────────
 const getWithdrawalHistory = async (req, res) => {
   try {
     const history = await db.query(`
@@ -351,29 +363,27 @@ const getWithdrawalHistory = async (req, res) => {
   } catch (err) { return error(res, 'Failed', 500); }
 };
 
-// Admin: approve withdrawal (unchanged)
+// ── ADMIN: APPROVE ────────────────────────────────
 const adminApproveWithdrawal = async (req, res) => {
   try {
     const { withdrawal_id } = req.params;
-    const wd = await db.query('SELECT * FROM withdrawals WHERE id = $1', [withdrawal_id]);
+    const wd = await db.query('SELECT * FROM withdrawals WHERE id=$1', [withdrawal_id]);
     if (!wd.rows[0]) return error(res, 'Not found');
     if (wd.rows[0].status !== 'pending')
       return error(res, 'Can only approve pending withdrawals');
 
-    await db.query(`
-      UPDATE withdrawals SET status = 'processing', updated_at = NOW()
-      WHERE id = $1
-    `, [withdrawal_id]);
-
+    await db.query(
+      'UPDATE withdrawals SET status=\'processing\', updated_at=NOW() WHERE id=$1',
+      [withdrawal_id]
+    );
     processWithdrawal(parseInt(withdrawal_id)).catch(err => {
       console.error('Admin approve process error:', err.message);
     });
-
     return success(res, {}, 'Withdrawal approved and processing');
   } catch (err) { return error(res, 'Failed', 500); }
 };
 
-// Admin: reject withdrawal (unchanged)
+// ── ADMIN: REJECT ─────────────────────────────────
 const adminRejectWithdrawal = async (req, res) => {
   const client = await db.pool.connect();
   try {
@@ -382,7 +392,7 @@ const adminRejectWithdrawal = async (req, res) => {
     const { reason } = req.body;
 
     const wd = await client.query(
-      'SELECT * FROM withdrawals WHERE id = $1 FOR UPDATE', [withdrawal_id]
+      'SELECT * FROM withdrawals WHERE id=$1 FOR UPDATE', [withdrawal_id]
     );
     if (!wd.rows[0]) return error(res, 'Not found');
     if (wd.rows[0].status !== 'pending')
@@ -392,18 +402,17 @@ const adminRejectWithdrawal = async (req, res) => {
     const refundAmt = parseFloat(w.amount) + parseFloat(w.fee);
 
     await client.query(`
-      UPDATE balances SET available = available + $1, updated_at = NOW()
-      WHERE user_id = $2 AND coin_id = $3 AND account_type = 'spot'
+      UPDATE balances SET available=available+$1, updated_at=NOW()
+      WHERE user_id=$2 AND coin_id=$3 AND account_type='spot'
     `, [refundAmt, w.user_id, w.coin_id]);
 
     await client.query(`
-      UPDATE withdrawals SET status = 'cancelled',
-        notes = $1, updated_at = NOW() WHERE id = $2
+      UPDATE withdrawals SET status='cancelled', notes=$1, updated_at=NOW() WHERE id=$2
     `, [reason || 'Rejected by admin', withdrawal_id]);
 
     await client.query('COMMIT');
 
-    db.query('SELECT email FROM users WHERE id = $1', [w.user_id])
+    db.query('SELECT email FROM users WHERE id=$1', [w.user_id])
       .then(u => {
         if (u.rows[0]) sendEmailSafe('sendWithdrawalRejectedEmail', u.rows[0], w, reason);
       }).catch(() => {});
@@ -412,12 +421,11 @@ const adminRejectWithdrawal = async (req, res) => {
   } catch (err) {
     await client.query('ROLLBACK');
     return error(res, 'Failed', 500);
-  } finally {
-    client.release();
-  }
+  } finally { client.release(); }
 };
 
 module.exports = {
-  getWithdrawInfo, requestWithdrawal, getWithdrawalHistory,
-  adminApproveWithdrawal, adminRejectWithdrawal, processWithdrawal
+  getWithdrawInfo, sendWithdrawalOTP, requestWithdrawal,
+  getWithdrawalHistory, adminApproveWithdrawal,
+  adminRejectWithdrawal, processWithdrawal
 };
