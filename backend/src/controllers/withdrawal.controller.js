@@ -161,7 +161,7 @@ const requestWithdrawal = async (req, res) => {
 
     // ── 2FA verify (if enabled) ───────────────────
     const twofa = await db.query(
-      'SELECT is_enabled, secret FROM two_factor_auth WHERE user_id = $1', [req.user.id]
+      'SELECT is_enabled, secret_key FROM two_factor_auth WHERE user_id = $1', [req.user.id]
     );
     if (twofa.rows[0]?.is_enabled) {
       if (!totp_code) {
@@ -170,7 +170,7 @@ const requestWithdrawal = async (req, res) => {
       }
       const speakeasy = require('speakeasy');
       const valid = speakeasy.totp.verify({
-        secret: twofa.rows[0].secret,
+        secret: twofa.rows[0].secret_key,
         encoding: 'base32',
         token: totp_code,
         window: 1
