@@ -1,6 +1,6 @@
 const { Server } = require('socket.io');
-const { redis } = require('../config/redis');
-const db = require('../config/database');
+const { redis }  = require('../config/redis');
+const db         = require('../config/database');
 const { verifyToken } = require('../utils/jwt');
 
 let io;
@@ -26,7 +26,6 @@ const initWebSocket = (server) => {
       }
     }
 
-    // SUBSCRIBE TO TICKER
     socket.on('subscribe_ticker', async (symbol) => {
       const room = `ticker:${symbol.toUpperCase()}`;
       socket.join(room);
@@ -40,22 +39,18 @@ const initWebSocket = (server) => {
       socket.leave(`ticker:${symbol.toUpperCase()}`);
     });
 
-    // SUBSCRIBE TO ORDER BOOK
     socket.on('subscribe_orderbook', async (symbol) => {
       const room = `orderbook:${symbol.toUpperCase()}`;
       socket.join(room);
 
-      // Send immediately on subscribe
       const pair = await db.query(
         'SELECT id, is_custom FROM trading_pairs WHERE symbol = $1',
         [symbol.toUpperCase()]
       );
       if (!pair.rows[0]) return;
-
       const { id: pairId, is_custom } = pair.rows[0];
 
       if (is_custom) {
-        // Internal orderbook
         const bids = await db.query(`
           SELECT CAST(price AS VARCHAR) as price,
                  CAST(SUM(remaining_qty) AS VARCHAR) as qty
@@ -75,7 +70,6 @@ const initWebSocket = (server) => {
           bids: bids.rows, asks: asks.rows, source: 'internal'
         });
       } else {
-        // Redis orderbook (Binance)
         const bids = await redis.zrevrange(`orderbook:${pairId}:bids`, 0, 19, 'WITHSCORES');
         const asks = await redis.zrange(`orderbook:${pairId}:asks`, 0, 19, 'WITHSCORES');
         socket.emit('orderbook', {
@@ -109,7 +103,7 @@ const initWebSocket = (server) => {
   return io;
 };
 
-// ── PRICE BROADCAST (every 1s) ──────────────────────
+// ── PRICE BROADCAST (every 1s) ────────────────────────
 const startPriceBroadcast = () => {
   setInterval(async () => {
     if (!io) return;
@@ -161,7 +155,6 @@ const startInternalOrderBookBroadcast = () => {
             AND status IN ('open','partially_filled') AND price IS NOT NULL
           GROUP BY price ORDER BY price DESC LIMIT 15
         `, [pair.id]);
-
         const asks = await db.query(`
           SELECT CAST(price AS VARCHAR) as price,
                  CAST(SUM(remaining_qty) AS VARCHAR) as qty
@@ -172,84 +165,102 @@ const startInternalOrderBookBroadcast = () => {
 
         io.to(room).emit('orderbook', {
           symbol: pair.symbol,
-          bids: bids.rows, asks: asks.rows,
-          source: 'internal'
+          bids: bids.rows, asks: asks.rows, source: 'internal'
         });
       }
     } catch (e) {}
   }, 1000);
 };
 
-// ── BINANCE WEBSOCKET RELAY ───────────────────────────
+// ── BINANCE WEBSOCKET RELAY (dynamic pairs from DB) ──
 const startBinanceWebSocket = () => {
   const WebSocket = require('ws');
 
-  // Ticker stream
-  const tickerStreams = [
-    'btcusdt@ticker','ethusdt@ticker','bnbusdt@ticker',
-    'solusdt@ticker','xrpusdt@ticker','dogeusdt@ticker','trxusdt@ticker'
-  ].join('/');
+  // Dynamic pairs load karo DB se
+  const loadAndConnect = async () => {
+    try {
+      const pairsResult = await db.query(
+        "SELECT LOWER(binance_symbol) as sym FROM trading_pairs WHERE is_custom=false AND is_active=true AND binance_symbol IS NOT NULL"
+      );
+      const pairSymbols = pairsResult.rows.map(r => r.sym);
 
-  const connectTicker = () => {
-    const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${tickerStreams}`);
-    ws.on('open', () => console.log('✅ Binance Ticker WS connected'));
-    ws.on('message', async (data) => {
-      try {
-        const parsed = JSON.parse(data);
-        const ticker = parsed.data;
-        if (!ticker || !ticker.s) return;
-        const symbol = ticker.s;
-        const coinSymbol = symbol.replace('USDT','');
-        await redis.setex(`price:${coinSymbol}`, 60, JSON.stringify({
-          price: ticker.c, change_24h: ticker.P,
-          volume_24h: ticker.q, high_24h: ticker.h, low_24h: ticker.l
-        }));
-        if (io) {
-          io.to(`ticker:${symbol}`).emit('ticker', {
-            symbol, price: ticker.c, change_24h: ticker.P,
-            volume_24h: ticker.q, high_24h: ticker.h,
-            low_24h: ticker.l, timestamp: Date.now()
-          });
-        }
-      } catch (e) {}
-    });
-    ws.on('close', () => setTimeout(connectTicker, 5000));
-    ws.on('error', () => {});
+      if (pairSymbols.length === 0) {
+        console.log('[WS] No Binance pairs found');
+        return;
+      }
+
+      const tickerStreams  = pairSymbols.map(s => s + '@ticker').join('/');
+      const obStreams      = pairSymbols.map(s => s + '@depth20@100ms').join('/');
+
+      console.log(`[WS] Connecting ${pairSymbols.length} pairs`);
+
+      // ── Ticker stream ────────────────────────────
+      const connectTicker = () => {
+        const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${tickerStreams}`);
+        ws.on('open', () => console.log('✅ Binance Ticker WS connected'));
+        ws.on('message', async (data) => {
+          try {
+            const parsed = JSON.parse(data);
+            const ticker = parsed.data;
+            if (!ticker || !ticker.s) return;
+            const symbol     = ticker.s;
+            const coinSymbol = symbol.replace('USDT', '');
+            await redis.setex(`price:${coinSymbol}`, 60, JSON.stringify({
+              price: ticker.c, change_24h: ticker.P,
+              volume_24h: ticker.q, high_24h: ticker.h, low_24h: ticker.l
+            }));
+            if (io) {
+              io.to(`ticker:${symbol}`).emit('ticker', {
+                symbol, price: ticker.c, change_24h: ticker.P,
+                volume_24h: ticker.q, high_24h: ticker.h,
+                low_24h: ticker.l, timestamp: Date.now()
+              });
+            }
+          } catch (e) {}
+        });
+        ws.on('close', () => setTimeout(connectTicker, 5000));
+        ws.on('error', () => {});
+      };
+
+      // ── OrderBook stream ─────────────────────────
+      const connectOrderBook = () => {
+        const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${obStreams}`);
+        ws.on('open', () => console.log('✅ Binance OrderBook WS connected'));
+        ws.on('message', async (data) => {
+          try {
+            const parsed = JSON.parse(data);
+            const ob = parsed.data;
+            if (!ob || !ob.bids) return;
+            const streamName = parsed.stream.split('@')[0].toUpperCase();
+            // Handle both BTCUSDT and BTC format
+            const symbol = streamName.endsWith('USDT') ? streamName : streamName + 'USDT';
+            const payload = {
+              symbol,
+              bids: (ob.bids || []).slice(0, 15).map(([price, qty]) => ({ price, qty })),
+              asks: (ob.asks || []).slice(0, 15).map(([price, qty]) => ({ price, qty })),
+              source: 'binance'
+            };
+            if (io) io.to(`orderbook:${symbol}`).emit('orderbook', payload);
+          } catch (e) {}
+        });
+        ws.on('close', () => {
+          console.log('⚠️ Binance OB WS disconnected - reconnecting...');
+          setTimeout(connectOrderBook, 5000);
+        });
+        ws.on('error', () => {});
+      };
+
+      connectTicker();
+      connectOrderBook();
+
+    } catch (e) {
+      console.error('[WS] loadAndConnect error:', e.message);
+      setTimeout(loadAndConnect, 10000);
+    }
   };
 
-  // Orderbook stream
-  const obStreams = [
-    'btcusdt@depth20@100ms','ethusdt@depth20@100ms','bnbusdt@depth20@100ms',
-    'solusdt@depth20@100ms','xrpusdt@depth20@100ms','dogeusdt@depth20@100ms','trxusdt@depth20@100ms'
-  ].join('/');
-
-  const connectOrderBook = () => {
-    const ws = new WebSocket(`wss://stream.binance.com:9443/stream?streams=${obStreams}`);
-    ws.on('open', () => console.log('✅ Binance OrderBook WS connected'));
-    ws.on('message', async (data) => {
-      try {
-        const parsed = JSON.parse(data);
-        const ob = parsed.data;
-        if (!ob || !ob.bids) return;
-        const symbol = parsed.stream.split('@')[0].toUpperCase() + 'USDT';
-        const payload = {
-          symbol,
-          bids: (ob.bids||[]).slice(0,15).map(([price,qty]) => ({price,qty})),
-          asks: (ob.asks||[]).slice(0,15).map(([price,qty]) => ({price,qty})),
-          source: 'binance'
-        };
-        if (io) io.to(`orderbook:${symbol}`).emit('orderbook', payload);
-      } catch (e) {}
-    });
-    ws.on('close', () => {
-      console.log('⚠️ Binance OB WS disconnected - reconnecting...');
-      setTimeout(connectOrderBook, 5000);
-    });
-    ws.on('error', () => {});
-  };
-
-  connectTicker();
-  connectOrderBook();
+  // DB ready hone ke baad connect karo
+  setTimeout(loadAndConnect, 2000);
 };
 
 // ── HELPERS ───────────────────────────────────────────

@@ -1,11 +1,11 @@
 require('dotenv').config();
 const express = require('express');
-const cors = require('cors');
-const helmet = require('helmet');
-const morgan = require('morgan');
-const http = require('http');
+const cors    = require('cors');
+const helmet  = require('helmet');
+const morgan  = require('morgan');
+const http    = require('http');
 
-const app = express();
+const app    = express();
 const server = http.createServer(app);
 
 // ── Middleware ─────────────────────────────────────
@@ -30,12 +30,11 @@ app.use(require('compression')());
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 require('./src/config/passport');
 
-// ── IMPORTANT: Webhook raw body FIRST (before express.json)
-// Alchemy signature verification ke liye raw body chahiye
+// ── Webhook raw body FIRST ─────────────────────────
 app.use('/api/v1/webhook/alchemy', express.raw({ type: 'application/json' }));
 app.use('/api/v1/webhook/vdchain', express.raw({ type: 'application/json' }));
 
-// ── JSON middleware (all other routes)
+// ── JSON middleware ────────────────────────────────
 app.use(express.json({ limit: '50mb' }));
 
 // ── Health check ───────────────────────────────────
@@ -48,9 +47,9 @@ app.get('/health', (req, res) => {
   });
 });
 
-// ════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 // API ROUTES
-// ════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════
 app.use('/api/v1/auth',          require('./src/routes/auth.routes'));
 app.use('/api/v1/user',          require('./src/routes/user.routes'));
 app.use('/api/v1/2fa',           require('./src/routes/twofa.routes'));
@@ -96,7 +95,7 @@ startPriceUpdater();
 const depositDetector = require('./src/services/wallet/depositDetector');
 depositDetector.init().then(() => depositDetector.start()).catch(console.error);
 
-// ── Order Matching Engine ──────────────────────────
+// ── Order Matching Engine (VDC internal) ───────────
 const orderMatcher = require('./src/services/orderMatcher');
 try {
   orderMatcher.start();
@@ -114,11 +113,21 @@ const sweepService = require('./src/services/wallet/sweepService');
 sweepService.start();
 console.log('🧹 SweepService loaded');
 
-module.exports = { app, server };
-
-// ── Reconcile Job (every 5 min) ────────────────────
+// ── Reconcile Job (every 1 min) ────────────────────
+// Limit orders ka Binance fill check karta hai
+// UserDataStream nahi hai to yahi fallback hai
 const reconcileService = require('./src/services/trading/reconcile');
 setInterval(() => {
   reconcileService.run().catch(console.error);
-}, 5 * 60 * 1000);
-console.log('🔄 ReconcileService loaded');
+}, 1 * 60 * 1000); // 1 min (was 5 min)
+console.log('🔄 ReconcileService loaded (1 min interval)');
+
+// ── Binance User Data Stream ────────────────────────
+// Limit order instant fill ke liye
+// 410 error = API key mein READ permission nahi
+// → Automatically disable ho jaata hai, reconcile fallback use hota hai
+const binanceUserStream = require('./src/services/trading/binanceUserStream');
+binanceUserStream.connect().catch(() => {});
+console.log('📡 Binance User Data Stream starting...');
+
+module.exports = { app, server };
