@@ -28,13 +28,13 @@ const placeOrder = async (req, res) => {
     if (order_type === 'limit' && (!limitPrice || isNaN(limitPrice) || limitPrice <= 0))
       return error(res, 'Valid price required for limit order');
 
-    // Get pair info — is_custom + binance_symbol bhi chahiye
     const pairInfo = await client.query(`
       SELECT tp.id, tp.symbol, tp.base_coin_id, tp.quote_coin_id,
              cb.symbol as base_symbol, cq.symbol as quote_symbol,
              tp.min_order_qty, tp.max_order_qty,
              tp.price_precision, tp.qty_precision,
-             tp.is_custom, tp.binance_symbol
+             tp.is_custom, tp.binance_symbol,
+             tp.step_size, tp.tick_size, tp.min_notional, tp.min_qty
       FROM trading_pairs tp
       JOIN coins cb ON cb.id = tp.base_coin_id
       JOIN coins cq ON cq.id = tp.quote_coin_id
@@ -44,18 +44,15 @@ const placeOrder = async (req, res) => {
     if (!pairInfo.rows[0]) return error(res, 'Trading pair not found or inactive');
     const pair = pairInfo.rows[0];
 
-    // Binance trading enabled check (non-custom pairs ke liye)
     if (!pair.is_custom) {
       const settingRes = await client.query(
         "SELECT value FROM system_settings WHERE key='binance_trading_enabled'"
       );
       const binanceEnabled = settingRes.rows[0]?.value === 'true';
-      if (!binanceEnabled) {
+      if (!binanceEnabled)
         return error(res, 'Trading temporarily unavailable for this pair');
-      }
     }
 
-    // Get current market price
     const priceData = await client.query(
       'SELECT price_usdt FROM price_feeds WHERE coin_id = $1',
       [pair.base_coin_id]
@@ -65,11 +62,22 @@ const placeOrder = async (req, res) => {
 
     const execPrice = order_type === 'market' ? marketPrice : limitPrice;
 
-    // Calculate required balance
+    // ── Validate min_notional ──────────────────────
+    if (!pair.is_custom) {
+      const minNotional = parseFloat(pair.min_notional || 5);
+      const orderValue  = qty * execPrice;
+      if (orderValue < minNotional)
+        return error(res, `Minimum order value is $${minNotional} (current: $${orderValue.toFixed(2)})`);
+
+      const minQty = parseFloat(pair.min_qty || 0);
+      if (qty < minQty)
+        return error(res, `Minimum quantity is ${minQty} ${pair.base_symbol}`);
+    }
+
     let requiredCoinId, requiredAmount;
     if (side === 'buy') {
-      requiredCoinId = pair.quote_coin_id; // USDT
-      requiredAmount = qty * execPrice * 1.001; // 0.1% buffer
+      requiredCoinId = pair.quote_coin_id;
+      requiredAmount = qty * execPrice * 1.001;
     } else {
       requiredCoinId = pair.base_coin_id;
       requiredAmount = qty;
@@ -78,7 +86,6 @@ const placeOrder = async (req, res) => {
     if (isNaN(requiredAmount) || requiredAmount <= 0)
       return error(res, 'Invalid order amount');
 
-    // Check + lock balance
     const balance = await client.query(`
       SELECT available, locked FROM balances
       WHERE user_id = $1 AND coin_id = $2 AND account_type = 'spot'
@@ -86,7 +93,6 @@ const placeOrder = async (req, res) => {
     `, [req.user.id, requiredCoinId]);
 
     if (!balance.rows[0]) return error(res, 'Insufficient balance');
-
     const available = parseFloat(balance.rows[0].available || 0);
     if (available < requiredAmount)
       return error(res,
@@ -95,13 +101,10 @@ const placeOrder = async (req, res) => {
 
     await client.query(`
       UPDATE balances
-      SET available = available - $1,
-          locked    = locked    + $1,
-          updated_at = NOW()
+      SET available = available - $1, locked = locked + $1, updated_at = NOW()
       WHERE user_id = $2 AND coin_id = $3 AND account_type = 'spot'
     `, [requiredAmount, req.user.id, requiredCoinId]);
 
-    // Create order record
     const orderId    = generateOrderId();
     const totalValue = qty * execPrice;
 
@@ -113,48 +116,59 @@ const placeOrder = async (req, res) => {
       VALUES ($1,$2,$3,$4,$5,$6,$7,$7,$8,'open',$9,'web',$10)
       RETURNING *
     `, [orderId, req.user.id, pair.id, side, order_type,
-        execPrice, qty, totalValue, time_in_force,
-        !pair.is_custom  // is_binance_order = true when not custom
-    ]);
+        execPrice, qty, totalValue, time_in_force, !pair.is_custom]);
 
-    // Ledger entry
     await client.query(`
       INSERT INTO ledger
-        (user_id, coin_id, type, amount, balance_before, balance_after,
-         reference_id, description)
+        (user_id, coin_id, type, amount, balance_before, balance_after, reference_id, description)
       VALUES ($1,$2,'order_lock',$3,$4,$5,$6,$7)
     `, [req.user.id, requiredCoinId, requiredAmount,
-        available, available - requiredAmount,
-        orderId,
+        available, available - requiredAmount, orderId,
         `${side.toUpperCase()} ${qty} ${pair.base_symbol} @ ${execPrice}`
     ]).catch(() => {});
 
     await client.query('COMMIT');
 
-    // ── Route order after commit ──────────────────
-    // is_custom=true  → Internal OrderMatcher (VDC etc)
-    // is_custom=false → Binance Hedge Engine (BTC/ETH etc)
-    setImmediate(() => {
+    // ── INSTANT ROUTE ─────────────────────────────
+    // Market order (non-custom) → await karo fill ke liye
+    // Limit order / custom → background mein
+    if (!pair.is_custom && order_type === 'market') {
+      // Market order: INSTANT fill — await karo
       try {
-        if (pair.is_custom) {
-          // Internal matching engine
-          const matcher = require('../services/orderMatcher');
-          matcher.matchPairNow(pair.id).catch(e =>
-            console.error('[Order] Internal match error:', e.message)
-          );
-        } else {
-          // Binance hedge
-          const tradingRouter = require('../services/trading/router');
-          tradingRouter.routeOrder(orderId, pair.id).catch(e =>
-            console.error('[Order] Binance route error:', e.message)
-          );
-        }
-      } catch (e) {
-        console.error('[Order] Route error:', e.message);
-      }
-    });
+        const tradingRouter = require('../services/trading/router');
+        await tradingRouter.routeOrder(orderId, pair.id);
 
-    return success(res, newOrder.rows[0], 'Order placed successfully');
+        // Fill ke baad updated order return karo
+        const updatedOrder = await db.query(
+          'SELECT * FROM orders WHERE order_id = $1', [orderId]
+        );
+        return success(res, updatedOrder.rows[0], updatedOrder.rows[0].status === 'filled' ? 'Order filled successfully!' : 'Order placed successfully');
+      } catch (e) {
+        console.error('[Order] Market route error:', e.message);
+        // Even if route fails, order is placed
+        return success(res, newOrder.rows[0], 'Order placed successfully');
+      }
+    } else {
+      // Limit order / custom → background
+      setImmediate(() => {
+        try {
+          if (pair.is_custom) {
+            const matcher = require('../services/orderMatcher');
+            matcher.matchPairNow(pair.id).catch(e =>
+              console.error('[Order] Internal match error:', e.message)
+            );
+          } else {
+            const tradingRouter = require('../services/trading/router');
+            tradingRouter.routeOrder(orderId, pair.id).catch(e =>
+              console.error('[Order] Binance route error:', e.message)
+            );
+          }
+        } catch (e) {
+          console.error('[Order] Route error:', e.message);
+        }
+      });
+      return success(res, newOrder.rows[0], 'Order placed successfully');
+    }
 
   } catch (err) {
     await client.query('ROLLBACK');
@@ -187,23 +201,43 @@ const cancelOrder = async (req, res) => {
     `, [order_id, req.user.id]);
 
     if (!order.rows[0]) return error(res, 'Order not found');
-
     const o = order.rows[0];
-    if (!['open','partially_filled'].includes(o.status))
-      return error(res, 'Order cannot be cancelled');
 
-    // ── Binance cancel pehle (non-custom pairs) ──
+    // ── Already filled? Block cancel ──────────────
+    if (o.status === 'filled') {
+      await client.query('ROLLBACK');
+      return error(res, 'Order already filled, cannot cancel');
+    }
+
+    if (!['open','partially_filled'].includes(o.status)) {
+      await client.query('ROLLBACK');
+      return error(res, 'Order cannot be cancelled');
+    }
+
+    // ── Binance: cancel + check filled ───────────
     if (!o.is_custom && o.is_binance_order) {
       try {
         const hedgeEngine = require('../services/trading/hedgeEngine');
         const cancelResult = await hedgeEngine.cancelHedge(order_id);
+
         if (!cancelResult.ok && cancelResult.reason === 'already_filled') {
+          // Order filled hai Binance pe — cancel reject karo
+          // processFill trigger karo agar DB mein nahi hua
+          const binanceOrder = await db.query(
+            'SELECT * FROM binance_orders WHERE our_order_id=$1', [order_id]
+          );
+          if (binanceOrder.rows[0] && binanceOrder.rows[0].status === 'filled') {
+            // Already processed hai
+            await client.query(
+              "UPDATE orders SET status='filled', updated_at=NOW() WHERE order_id=$1",
+              [order_id]
+            );
+          }
           await client.query('ROLLBACK');
-          return error(res, 'Order already filled on exchange');
+          return error(res, 'Order already filled on exchange, cannot cancel');
         }
       } catch (e) {
         console.error('[Cancel] Binance cancel error:', e.message);
-        // Continue with local cancel even if Binance fails
       }
     }
 
@@ -212,33 +246,29 @@ const cancelOrder = async (req, res) => {
 
     let refundCoinId, refundAmount;
     if (o.side === 'buy') {
-      refundCoinId  = o.quote_coin_id;
-      refundAmount  = remainingQty * orderPrice * 1.001;
+      refundCoinId = o.quote_coin_id;
+      refundAmount = remainingQty * orderPrice * 1.001;
     } else {
-      refundCoinId  = o.base_coin_id;
-      refundAmount  = remainingQty;
+      refundCoinId = o.base_coin_id;
+      refundAmount = remainingQty;
     }
 
     if (refundAmount > 0) {
       await client.query(`
         UPDATE balances
-        SET available  = available + $1,
-            locked     = GREATEST(0, locked - $1),
-            updated_at = NOW()
+        SET available = available + $1, locked = GREATEST(0, locked - $1), updated_at = NOW()
         WHERE user_id = $2 AND coin_id = $3 AND account_type = 'spot'
       `, [refundAmount, req.user.id, refundCoinId]);
     }
 
     await client.query(
-      `UPDATE orders SET status = 'cancelled', updated_at = NOW()
-       WHERE order_id = $1`, [order_id]
+      "UPDATE orders SET status='cancelled', updated_at=NOW() WHERE order_id=$1",
+      [order_id]
     );
 
     await client.query('COMMIT');
 
-    return success(res, {
-      order_id, refunded: refundAmount, status: 'cancelled'
-    }, 'Order cancelled');
+    return success(res, { order_id, refunded: refundAmount, status: 'cancelled' }, 'Order cancelled');
 
   } catch (err) {
     await client.query('ROLLBACK');
