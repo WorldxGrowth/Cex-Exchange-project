@@ -197,8 +197,30 @@ export default function Trade() {
       }
     });
 
+    // Real-time order fill notification
+    socket.on('order_update', (data: any) => {
+      if (data.status === 'filled' || data.status === 'cancelled') {
+        // Remove from open orders
+        setOpenOrders((prev: any[]) => prev.filter((o: any) => o.order_id !== data.order_id));
+        if (data.status === 'filled') {
+          loadBalances();
+        }
+      } else if (data.status === 'partially_filled') {
+        setOpenOrders((prev: any[]) => prev.map((o: any) =>
+          o.order_id === data.order_id ? { ...o, ...data } : o
+        ));
+      }
+    });
+
+    // Polling for limit order updates (every 30 sec as backup)
+    const pollTimer = setInterval(() => {
+      orderAPI.getOpen(sym).then((res: any) => setOpenOrders(res.data || []));
+    }, 30000);
+
     return () => {
       socket.off('orderbook');
+      socket.off('order_update');
+      clearInterval(pollTimer);
       unsubscribeBinanceOrderBook();
     };
   }, [symbol]);
@@ -244,15 +266,37 @@ export default function Trade() {
     }
     setLoading(true);
     try {
-      await orderAPI.place({
+      const res: any = await orderAPI.place({
         symbol: sym, side, order_type: orderType,
         price: orderType === 'limit' ? price : undefined,
         quantity
       });
-      toast.success(`${side.toUpperCase()} order placed!`);
+
+      const order = res.data;
+      const status = order?.status;
+
+      if (status === 'filled') {
+        // Market order — instant fill
+        toast.success(`✅ ${side.toUpperCase()} filled @ ${parseFloat(order.avg_fill_price||order.price||0).toFixed(2)}`);
+        // Don't add to openOrders — already filled
+      } else if (status === 'open' || status === 'partially_filled') {
+        // Limit order — add to open orders
+        toast.success(`${side.toUpperCase()} order placed!`);
+        setOpenOrders((prev: any[]) => [order, ...prev]);
+      } else {
+        toast.success(`${side.toUpperCase()} order placed!`);
+      }
+
       setQuantity(''); setTotalInput(''); setPct(0);
-      orderAPI.getOpen(sym).then((res: any) => setOpenOrders(res.data || []));
+      // Balance update
       loadBalances();
+
+      // Refresh open orders after 2 sec (for limit order updates)
+      setTimeout(() => {
+        orderAPI.getOpen(sym).then((res: any) => setOpenOrders(res.data || []));
+        loadBalances();
+      }, 2000);
+
     } catch (err: any) {
       toast.error(err?.message || 'Order failed');
     } finally { setLoading(false); }
