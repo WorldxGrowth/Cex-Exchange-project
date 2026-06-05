@@ -77,7 +77,11 @@ export default function ChartHeader({
             {low24h > 0 ? low24h.toLocaleString() : '---'}
           </span></div>
           <div>24h vol <span style={{ color: 'var(--color-text)', marginLeft: 6 }}>
-            {volume24h > 0 ? (volume24h / 1000000).toFixed(2) + 'M' : '---'}
+            {volume24h <= 0 ? '---' :
+              volume24h >= 1000000000 ? (volume24h/1000000000).toFixed(2)+'B' :
+              volume24h >= 1000000    ? (volume24h/1000000).toFixed(2)+'M' :
+              volume24h >= 1000       ? (volume24h/1000).toFixed(2)+'K' :
+              volume24h.toFixed(2)}
           </span></div>
         </div>
       </div>

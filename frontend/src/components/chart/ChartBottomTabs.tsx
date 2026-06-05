@@ -110,7 +110,13 @@ export default function ChartBottomTabs({
                 color: isUp ? 'var(--color-success)' : 'var(--color-danger)' },
               { label: '24h High',  value: '$' + high24h.toLocaleString() },
               { label: '24h Low',   value: '$' + low24h.toLocaleString() },
-              { label: '24h Volume', value: (volume24h / 1000000).toFixed(2) + 'M USDT' },
+              { label: '24h Volume', value: (
+                volume24h <= 0 ? '--- USDT' :
+                volume24h >= 1000000000 ? (volume24h/1000000000).toFixed(2)+'B USDT' :
+                volume24h >= 1000000    ? (volume24h/1000000).toFixed(2)+'M USDT' :
+                volume24h >= 1000       ? (volume24h/1000).toFixed(2)+'K USDT' :
+                volume24h.toFixed(2)+' USDT'
+              ) },
             ].map(({ label, value, color }) => (
               <div key={label} style={{ display: 'flex', justifyContent: 'space-between',
                                          padding: '6px 0',
