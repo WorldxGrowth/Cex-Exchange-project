@@ -274,6 +274,39 @@ const getKlines = async (req, res) => {
       }
     }
 
+    // Custom token → trades se OHLCV generate karo
+    if (is_custom) {
+      try {
+        const intervalSeconds = {
+          '1m': 60, '5m': 300, '15m': 900, '30m': 1800,
+          '1h': 3600, '4h': 14400, '1d': 86400, '1w': 604800
+        };
+        const secs = intervalSeconds[interval] || 3600;
+
+        const tradesData = await db.query(`
+          SELECT
+            to_timestamp(floor(extract(epoch from created_at) / $1) * $1) as open_time,
+            (array_agg(price ORDER BY created_at ASC))[1] as open,
+            MAX(price) as high,
+            MIN(price) as low,
+            (array_agg(price ORDER BY created_at DESC))[1] as close,
+            SUM(quantity) as volume,
+            to_timestamp(floor(extract(epoch from created_at) / $1) * $1 + $1 - 1) as close_time
+          FROM trades
+          WHERE pair_id = $2
+          GROUP BY floor(extract(epoch from created_at) / $1)
+          ORDER BY open_time ASC
+          LIMIT $3
+        `, [secs, pairId, limit]);
+
+        if (tradesData.rows.length > 0) {
+          return success(res, tradesData.rows);
+        }
+      } catch (e) {
+        console.error('Custom klines error:', e.message);
+      }
+    }
+
     return success(res, []);
   } catch (err) {
     return error(res, 'Failed to get klines', 500);
@@ -369,10 +402,86 @@ const updatePricesFromCoingecko = async () => {
   }
 };
 
+// UPDATE custom token stats (VDC etc) from trades table
+// ALL custom tokens ke liye auto-work karta hai
+const updateCustomTokenStats = async () => {
+  try {
+    // Get all custom trading pairs
+    const pairs = await db.query(`
+      SELECT tp.id, tp.symbol, tp.base_coin_id,
+             bc.symbol as base_symbol
+      FROM trading_pairs tp
+      JOIN coins bc ON bc.id = tp.base_coin_id
+      WHERE tp.is_custom = true AND tp.is_active = true
+    `);
+
+    if (pairs.rows.length === 0) return;
+
+    for (const pair of pairs.rows) {
+      try {
+        // 24h stats from trades
+        const stats = await db.query(`
+          SELECT
+            COUNT(*) as trade_count,
+            COALESCE(MAX(price), 0) as high_24h,
+            COALESCE(MIN(price), 0) as low_24h,
+            COALESCE(SUM(total_value), 0) as volume_24h,
+            (array_agg(price ORDER BY created_at DESC))[1] as last_price,
+            (array_agg(price ORDER BY created_at ASC))[1] as open_price
+          FROM trades
+          WHERE pair_id = $1
+            AND created_at > NOW() - INTERVAL '24 hours'
+        `, [pair.id]);
+
+        const s = stats.rows[0];
+        if (!s || parseFloat(s.trade_count) === 0) continue;
+
+        const lastPrice  = parseFloat(s.last_price  || 0);
+        const openPrice  = parseFloat(s.open_price  || lastPrice);
+        const high24h    = parseFloat(s.high_24h    || 0);
+        const low24h     = parseFloat(s.low_24h     || 0);
+        const volume24h  = parseFloat(s.volume_24h  || 0);
+        const change24h  = openPrice > 0
+          ? ((lastPrice - openPrice) / openPrice * 100)
+          : 0;
+
+        // Update price_feeds
+        await db.query(`
+          INSERT INTO price_feeds
+            (coin_id, price_usdt, change_24h, volume_24h, high_24h, low_24h, source, updated_at)
+          VALUES ($1, $2, $3, $4, $5, $6, 'internal', NOW())
+          ON CONFLICT (coin_id) DO UPDATE SET
+            high_24h   = CASE WHEN $5 > 0 THEN $5 ELSE price_feeds.high_24h END,
+            low_24h    = CASE WHEN $6 > 0 THEN $6 ELSE price_feeds.low_24h END,
+            volume_24h = $4,
+            change_24h = $3,
+            updated_at = NOW()
+        `, [pair.base_coin_id, lastPrice, change24h, volume24h, high24h, low24h]);
+
+        // Update redis cache
+        await cache.set(`price:${pair.base_symbol}`, {
+          price: lastPrice.toString(),
+          change_24h: change24h.toFixed(4),
+          volume_24h: volume24h.toString(),
+          high_24h: high24h.toString(),
+          low_24h: low24h.toString()
+        }, 60);
+
+        console.log(`✅ Custom stats: ${pair.symbol} price=${lastPrice} vol=${volume24h} h=${high24h} l=${low24h}`);
+      } catch (e) {
+        console.error(`Custom stats error ${pair.symbol}:`, e.message);
+      }
+    }
+  } catch (err) {
+    console.error('updateCustomTokenStats error:', err.message);
+  }
+};
+
 module.exports = {
   getCoins, getPairs, getTicker, getOrderBook,
   getRecentTrades, getKlines,
-  updatePricesFromBinance, updatePricesFromCoingecko
+  updatePricesFromBinance, updatePricesFromCoingecko,
+  updateCustomTokenStats
 };
 
 // ================================
