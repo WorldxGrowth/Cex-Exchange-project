@@ -27,6 +27,7 @@ import Chart from './pages/chart/Chart';
 import Orders from './pages/orders/Orders';
 import DepositHistory from './pages/assets/DepositHistory';
 import DepositDetail from './pages/assets/DepositDetail';
+import WithdrawDetail from './pages/assets/WithdrawDetail';
 import Futures from './pages/futures/Futures';
 import Landing from './pages/landing/Landing';
 import CmsPage from './pages/cms/CmsPage';
@@ -85,6 +86,7 @@ export default function App() {
             <Route path="futures/:symbol"  element={<Futures />} />
             <Route path="deposit-history"  element={<DepositHistory />} />
             <Route path="deposit-detail/:id" element={<DepositDetail />} />
+            <Route path="withdraw-detail/:id" element={<WithdrawDetail />} />
             <Route path="support"          element={<Support />} />
             <Route path="notifications"    element={<Notifications />} />
             <Route path="more"           element={<More />} />

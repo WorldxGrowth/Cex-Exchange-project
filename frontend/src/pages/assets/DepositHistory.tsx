@@ -207,6 +207,7 @@ export default function DepositHistory() {
                      justifyContent: 'space-between', cursor: 'pointer' }}
             onClick={() => {
               if (tab === 'deposit') navigate('/deposit-detail/' + d.id);
+              if (tab === 'withdraw') navigate('/withdraw-detail/' + d.id);
             }}>
             <div>
               <div style={{ fontSize: 14, fontWeight: 600,
