@@ -28,13 +28,13 @@ const OrderBook = ({ bids, asks, currentPrice, isUp, onPriceClick }: any) => {
       {[...asks].slice(0, 8).reverse().map((ask: any, i: number) => {
         const pct = Math.min((parseFloat(ask.qty) / maxQty) * 100, 100);
         return (
-          <div key={i} onClick={() => onPriceClick(parseFloat(ask.price||0).toFixed(2))}
+          <div key={i} onClick={() => onPriceClick(parseFloat(ask.price||0).toFixed(4))}
             style={{ display: 'flex', justifyContent: 'space-between',
                      padding: '2.5px 8px', cursor: 'pointer', position: 'relative' }}>
             <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0,
                           width: `${pct}%`, background: 'rgba(246,70,93,0.12)' }} />
             <span style={{ color: 'var(--color-danger)', position: 'relative', zIndex: 1 }}>
-              {parseFloat(ask.price||0).toFixed(2)}
+              {parseFloat(ask.price||0).toFixed(4)}
             </span>
             <span style={{ color: 'var(--color-text)', position: 'relative', zIndex: 1 }}>
               {parseFloat(ask.qty||0).toFixed(4)}
@@ -44,14 +44,14 @@ const OrderBook = ({ bids, asks, currentPrice, isUp, onPriceClick }: any) => {
       })}
 
       {/* Current price row */}
-      <div onClick={() => onPriceClick(currentPrice.toFixed(2))}
+      <div onClick={() => onPriceClick(currentPrice.toFixed(4))}
         style={{ display: 'flex', alignItems: 'center', justifyContent: 'center',
                  padding: '5px 8px', cursor: 'pointer',
                  background: isUp ? 'rgba(14,203,129,0.06)' : 'rgba(246,70,93,0.06)' }}>
         <span style={{ fontSize: 14, fontWeight: 800,
                        color: isUp ? 'var(--color-success)' : 'var(--color-danger)' }}>
           {currentPrice > 0 ? currentPrice.toLocaleString(undefined,
-            { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '---'}
+            { minimumFractionDigits: 2, maximumFractionDigits: 6 }) : '---'}
         </span>
       </div>
 
@@ -59,13 +59,13 @@ const OrderBook = ({ bids, asks, currentPrice, isUp, onPriceClick }: any) => {
       {bids.slice(0, 8).map((bid: any, i: number) => {
         const pct = Math.min((parseFloat(bid.qty) / maxQty) * 100, 100);
         return (
-          <div key={i} onClick={() => onPriceClick(parseFloat(bid.price||0).toFixed(2))}
+          <div key={i} onClick={() => onPriceClick(parseFloat(bid.price||0).toFixed(4))}
             style={{ display: 'flex', justifyContent: 'space-between',
                      padding: '2.5px 8px', cursor: 'pointer', position: 'relative' }}>
             <div style={{ position: 'absolute', right: 0, top: 0, bottom: 0,
                           width: `${pct}%`, background: 'rgba(14,203,129,0.12)' }} />
             <span style={{ color: 'var(--color-success)', position: 'relative', zIndex: 1 }}>
-              {parseFloat(bid.price||0).toFixed(2)}
+              {parseFloat(bid.price||0).toFixed(4)}
             </span>
             <span style={{ color: 'var(--color-text)', position: 'relative', zIndex: 1 }}>
               {parseFloat(bid.qty||0).toFixed(4)}
@@ -92,7 +92,7 @@ const RecentTrades = ({ trades }: any) => (
         <div key={i} style={{ display: 'flex', justifyContent: 'space-between',
                                padding: '3px 8px' }}>
           <span style={{ color: t.side === 'buy' ? 'var(--color-success)' : 'var(--color-danger)' }}>
-            {parseFloat(t.price||0).toFixed(2)}
+            {parseFloat(t.price||0).toFixed(4)}
           </span>
           <span style={{ color: 'var(--color-text)' }}>
             {parseFloat(t.quantity||0).toFixed(4)}
