@@ -36,6 +36,8 @@ const getPairs = async (req, res) => {
              tp.price_precision, tp.qty_precision,
              tp.min_order_qty, tp.min_order_value,
              tp.maker_fee, tp.taker_fee, tp.sort_order,
+             tp.pre_listing_mode, tp.show_countdown,
+             tp.trading_enabled_at, tp.trading_notice,
              bc.symbol as base_symbol, bc.name as base_name, bc.logo_url as base_logo,
              qc.symbol as quote_symbol,
              p.price_usdt as price, p.change_24h,
@@ -44,7 +46,7 @@ const getPairs = async (req, res) => {
       JOIN coins bc ON bc.id = tp.base_coin_id
       JOIN coins qc ON qc.id = tp.quote_coin_id
       LEFT JOIN price_feeds p ON p.coin_id = tp.base_coin_id
-      WHERE tp.is_active = true
+      WHERE (tp.is_active = true OR tp.pre_listing_mode = true)
       ORDER BY tp.sort_order ASC
     `);
     return success(res, pairs.rows);
