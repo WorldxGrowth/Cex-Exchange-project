@@ -349,6 +349,18 @@ const processWithdrawal = async (withdrawalId) => {
 // ── WITHDRAWAL HISTORY ────────────────────────────
 const getWithdrawalHistory = async (req, res) => {
   try {
+    const limit      = parseInt(req.query.limit  || 50);
+    const offset     = parseInt(req.query.offset || 0);
+    const coinFilter = req.query.coin ? req.query.coin.toUpperCase() : null;
+
+    const params = [req.user.id];
+    let coinWhere = '';
+    if (coinFilter) {
+      params.push(coinFilter);
+      coinWhere = `AND c.symbol = $${params.length}`;
+    }
+    params.push(limit, offset);
+
     const history = await db.query(`
       SELECT w.id, w.tx_id, w.to_address, w.amount, w.fee,
              w.receive_amount, w.status, w.txhash, w.created_at,
@@ -356,9 +368,10 @@ const getWithdrawalHistory = async (req, res) => {
       FROM withdrawals w
       JOIN coins c ON c.id = w.coin_id
       JOIN networks n ON n.id = w.network_id
-      WHERE w.user_id = $1
-      ORDER BY w.created_at DESC LIMIT 50
-    `, [req.user.id]);
+      WHERE w.user_id = $1 ${coinWhere}
+      ORDER BY w.created_at DESC
+      LIMIT $${params.length - 1} OFFSET $${params.length}
+    `, params);
     return success(res, history.rows);
   } catch (err) { return error(res, 'Failed', 500); }
 };

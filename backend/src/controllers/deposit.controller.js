@@ -86,8 +86,18 @@ const getDepositAddress = async (req, res) => {
 
 const getDepositHistory = async (req, res) => {
   try {
-    const limit  = req.query.limit  || 20;
-    const offset = req.query.offset || 0;
+    const limit      = parseInt(req.query.limit  || 20);
+    const offset     = parseInt(req.query.offset || 0);
+    const coinFilter = req.query.coin ? req.query.coin.toUpperCase() : null;
+
+    const params = [req.user.id];
+    let coinWhere = '';
+    if (coinFilter) {
+      params.push(coinFilter);
+      coinWhere = `AND c.symbol = $${params.length}`;
+    }
+    params.push(limit, offset);
+
     const deposits = await db.query(`
       SELECT d.*, c.symbol, c.name, c.logo_url,
              n.name as network_name, n.short_name as network,
@@ -95,10 +105,10 @@ const getDepositHistory = async (req, res) => {
       FROM deposits d
       LEFT JOIN coins c ON c.id = d.coin_id
       LEFT JOIN networks n ON n.id = d.network_id
-      WHERE d.user_id = $1
+      WHERE d.user_id = $1 ${coinWhere}
       ORDER BY d.created_at DESC
-      LIMIT $2 OFFSET $3
-    `, [req.user.id, limit, offset]);
+      LIMIT $${params.length - 1} OFFSET $${params.length}
+    `, params);
     return success(res, deposits.rows);
   } catch (err) {
     return error(res, 'Failed', 500);

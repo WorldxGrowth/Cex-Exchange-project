@@ -17,6 +17,7 @@ import Referral from './pages/referral/Referral';
 import KYC from './pages/kyc/KYC';
 import ListingApply from './pages/listing/ListingApply';
 import ListingDetail from './pages/listing/ListingDetail';
+import TokenDetail  from './pages/assets/TokenDetail';
 import Security from './pages/security/Security';
 import EditProfile from './pages/profile/EditProfile';
 import TwoFA from './pages/security/TwoFA';
@@ -79,6 +80,7 @@ export default function App() {
             <Route path="kyc"              element={<KYC />} />
             <Route path="listing"          element={<ListingApply />} />
             <Route path="listing/:symbol"   element={<ListingDetail />} />
+            <Route path="token/:symbol"     element={<TokenDetail />} />
             <Route path="security"         element={<Security />} />
             <Route path="edit-profile"     element={<EditProfile />} />
             <Route path="2fa"              element={<TwoFA />} />

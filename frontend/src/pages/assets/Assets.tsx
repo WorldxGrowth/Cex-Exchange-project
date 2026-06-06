@@ -304,8 +304,10 @@ export default function Assets() {
               const isUp   = change >= 0;
               return (
                 <div key={b.symbol + b.account_type}
+                  onClick={() => navigate(`/token/${b.symbol}`)}
                   style={{ display: 'flex', alignItems: 'center',
                            justifyContent: 'space-between', padding: '14px 0',
+                           cursor: 'pointer',
                            borderBottom: '1px solid var(--color-border)' }}>
 
                   {/* Left: logo + name */}
