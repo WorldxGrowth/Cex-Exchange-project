@@ -19,6 +19,7 @@ import FeeRules from './pages/trading/FeeRules';
 import VipLevels from './pages/trading/VipLevels';
 import Reports from './pages/reports/Reports';
 import BinanceCreds from './pages/trading/BinanceCreds';
+import OrderBook from './pages/trading/OrderBook';
 import WithdrawalSettings from './pages/finance/WithdrawalSettings';
 import Networks from './pages/finance/Networks';
 import Announcements from './pages/content/Announcements';
@@ -57,6 +58,7 @@ export default function App() {
             <Route path="trading/fees"        element={<FeeRules />} />
             <Route path="trading/vip"         element={<VipLevels />} />
             <Route path="trading/binance"     element={<BinanceCreds />} />
+            <Route path="trading/orderbook"  element={<OrderBook />} />
             <Route path="finance/withdrawal-settings" element={<WithdrawalSettings />} />
             <Route path="finance/networks"    element={<Networks />} />
             <Route path="content/announcements" element={<Announcements />} />

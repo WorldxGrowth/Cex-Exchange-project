@@ -51,6 +51,13 @@ export const adminAPI = {
 
   // Trading Pairs
   getPairs: () => api.get('/admin/pairs'),
+
+  // OrderBook Management
+  getOrderBook:      (params) => api.get('/admin/orderbook', { params }),
+  createOrders:      (data)   => api.post('/admin/orderbook', data),
+  updateOrder:       (id, data) => api.put(`/admin/orderbook/${id}`, data),
+  deleteOrder:       (id)     => api.delete(`/admin/orderbook/${id}`),
+  cancelAllOrders:   (data)   => api.post('/admin/orderbook/cancel-all', data),
   addPair: (data) => api.post('/admin/pairs', data),
   updatePair: (id, data) => api.put(`/admin/pairs/${id}`, data),
 
