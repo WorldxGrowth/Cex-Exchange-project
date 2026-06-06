@@ -28,8 +28,8 @@ export default function TpSlSheet({ currentPrice, side, onConfirm, onClose }: Pr
   return (
     <>
       <div onClick={onClose} style={{ position: 'fixed', inset: 0,
-        background: 'rgba(0,0,0,0.5)', zIndex: 99 }} />
-      <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 100,
+        background: 'rgba(0,0,0,0.5)', zIndex: 999 }} />
+      <div style={{ position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 1000,
                     background: 'var(--color-surface)', borderRadius: '16px 16px 0 0',
                     padding: '20px 16px 32px' }}>
         <div style={{ width: 40, height: 4, borderRadius: 2,
