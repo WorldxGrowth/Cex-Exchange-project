@@ -8,6 +8,8 @@ const {
   getUserWithdrawals, getUserLedger, adjustBalance,
   getCoinsAdmin, addCoin, updateCoin,
   getTradingPairs, addTradingPair, updateTradingPair,
+  getAdminOrders, createAdminOrders, updateAdminOrder,
+  deleteAdminOrder, deleteAllAdminOrders,
   getFeeRules, addFeeRule, updateFeeRule, deleteFeeRule,
   getVipLevels, updateVipLevel,
   getTreasuryReport, getVolumeReport,
@@ -108,6 +110,13 @@ const { getWithdrawalSettings, updateWithdrawalSetting,
         getNetworks, updateNetwork,
         getAnnouncements, updateAnnouncement, deleteAnnouncement
 } = require('../controllers/admin.controller');
+
+// Admin OrderBook CRUD
+router.get('/orderbook',           getAdminOrders);
+router.post('/orderbook',          createAdminOrders);
+router.put('/orderbook/:id',       updateAdminOrder);
+router.delete('/orderbook/:id',    deleteAdminOrder);
+router.post('/orderbook/cancel-all', deleteAllAdminOrders);
 
 router.get('/withdrawal-settings',        getWithdrawalSettings);
 router.put('/withdrawal-settings/:id',    updateWithdrawalSetting);

@@ -1127,7 +1127,7 @@ const deleteAnnouncement = async (req, res) => {
   } catch (err) { return error(res, 'Failed', 500); }
 };
 
-// Export new functions
+// Export Announcement and Setting functions
 module.exports = Object.assign(module.exports, {
   getWithdrawalSettings, updateWithdrawalSetting,
   getNetworks, updateNetwork,
@@ -1234,6 +1234,164 @@ const deleteCmsPage = async (req, res) => {
   } catch (err) { return error(res, 'Failed', 500); }
 };
 
+// Export CMS functions
 module.exports = Object.assign(module.exports, {
   getCmsPages, getCmsPage, addCmsPage, updateCmsPage, deleteCmsPage,
+});
+
+// ================================
+// ADMIN ORDERBOOK MANAGEMENT
+// ================================
+const getAdminOrders = async (req, res) => {
+  try {
+    const { pair_id, side, status = 'open' } = req.query;
+    let where = "WHERE o.source = 'admin'";
+    const params = [];
+    if (pair_id) { params.push(pair_id); where += ` AND o.pair_id = $${params.length}`; }
+    if (side)    { params.push(side);    where += ` AND o.side = $${params.length}`; }
+    if (status)  { params.push(status);  where += ` AND o.status = $${params.length}`; }
+
+    const result = await db.query(`
+      SELECT o.*, tp.symbol, tp.price_precision, tp.qty_precision
+      FROM orders o
+      JOIN trading_pairs tp ON tp.id = o.pair_id
+      ${where}
+      ORDER BY o.created_at DESC
+      LIMIT 200
+    `, params);
+    return success(res, result.rows);
+  } catch (err) {
+    console.error('getAdminOrders:', err.message);
+    return error(res, 'Failed', 500);
+  }
+};
+
+const createAdminOrders = async (req, res) => {
+  try {
+    const { pair_id, orders } = req.body;
+    // orders = [{ side, price, quantity }, ...]
+    if (!pair_id || !orders || !Array.isArray(orders) || orders.length === 0)
+      return error(res, 'pair_id and orders[] required');
+    if (orders.length > 50)
+      return error(res, 'Max 50 orders at once');
+
+    const pair = await db.query(
+      'SELECT id, symbol FROM trading_pairs WHERE id = $1', [pair_id]
+    );
+    if (!pair.rows[0]) return error(res, 'Pair not found');
+
+    const inserted = [];
+    for (const ord of orders) {
+      const { side, price, quantity } = ord;
+      if (!side || !price || !quantity) continue;
+      if (!['buy','sell'].includes(side)) continue;
+      const p = parseFloat(price);
+      const q = parseFloat(quantity);
+      if (p <= 0 || q <= 0) continue;
+
+      const orderId = 'ADM' + Date.now() + Math.random().toString(36).substr(2,6).toUpperCase();
+      const totalValue = p * q;
+
+      const row = await db.query(`
+        INSERT INTO orders (
+          order_id, user_id, pair_id, side, order_type,
+          price, quantity, remaining_qty, filled_qty,
+          total_value, status, is_bot_order, source,
+          created_at, updated_at
+        ) VALUES ($1,$2,$3,$4,'limit',$5,$6,$6,0,$7,'open',false,'admin',NOW(),NOW())
+        RETURNING *
+      `, [orderId, 5, pair_id, side, p, q, totalValue]);
+
+      inserted.push(row.rows[0]);
+    }
+
+    return success(res, { inserted: inserted.length, orders: inserted },
+      `${inserted.length} orders created`);
+  } catch (err) {
+    console.error('createAdminOrders:', err.message);
+    return error(res, 'Failed', 500);
+  }
+};
+
+const updateAdminOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { price, quantity, status } = req.body;
+
+    const existing = await db.query(
+      "SELECT * FROM orders WHERE id = $1 AND source = 'admin'", [id]
+    );
+    if (!existing.rows[0]) return error(res, 'Order not found');
+
+    const updates = [];
+    const params = [];
+
+    if (price !== undefined) {
+      params.push(parseFloat(price));
+      updates.push(`price = $${params.length}`);
+      params.push(parseFloat(price) * parseFloat(existing.rows[0].quantity));
+      updates.push(`total_value = $${params.length}`);
+    }
+    if (quantity !== undefined) {
+      params.push(parseFloat(quantity));
+      updates.push(`quantity = $${params.length}`);
+      updates.push(`remaining_qty = $${params.length}`);
+    }
+    if (status !== undefined) {
+      params.push(status);
+      updates.push(`status = $${params.length}`);
+    }
+
+    if (updates.length === 0) return error(res, 'Nothing to update');
+
+    params.push(id);
+    const result = await db.query(`
+      UPDATE orders SET ${updates.join(', ')}, updated_at = NOW()
+      WHERE id = $${params.length} AND source = 'admin'
+      RETURNING *
+    `, params);
+
+    return success(res, result.rows[0], 'Order updated');
+  } catch (err) {
+    console.error('updateAdminOrder:', err.message);
+    return error(res, 'Failed', 500);
+  }
+};
+
+const deleteAdminOrder = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await db.query(
+      "UPDATE orders SET status='cancelled', updated_at=NOW() WHERE id=$1 AND source='admin' RETURNING id",
+      [id]
+    );
+    if (!result.rows[0]) return error(res, 'Order not found');
+    return success(res, {}, 'Order cancelled');
+  } catch (err) {
+    return error(res, 'Failed', 500);
+  }
+};
+
+const deleteAllAdminOrders = async (req, res) => {
+  try {
+    const { pair_id, side } = req.body;
+    let where = "source='admin' AND status='open'";
+    const params = [];
+    if (pair_id) { params.push(pair_id); where += ` AND pair_id=$${params.length}`; }
+    if (side)    { params.push(side);    where += ` AND side=$${params.length}`; }
+
+    const result = await db.query(
+      `UPDATE orders SET status='cancelled', updated_at=NOW() WHERE ${where} RETURNING id`,
+      params
+    );
+    return success(res, { cancelled: result.rows.length }, `${result.rows.length} orders cancelled`);
+  } catch (err) {
+    return error(res, 'Failed', 500);
+  }
+};
+
+// Export OrderBook functions
+module.exports = Object.assign(module.exports, {
+  getAdminOrders, createAdminOrders, updateAdminOrder,
+  deleteAdminOrder, deleteAllAdminOrders,
 });
