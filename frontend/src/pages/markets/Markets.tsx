@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { marketAPI } from '../../services/api';
 import { useStore } from '../../store/useStore';
 import { subscribeToTicker } from '../../services/socket';
@@ -26,6 +26,8 @@ const SkeletonRow = () => (
 
 export default function Markets() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const fromFutures = new URLSearchParams(location.search).get('from') === 'futures';
   const { prices, pairs: cachedPairs, setPairs, pairsLoadedAt } = useStore();
   const [pairs, setPairsLocal]   = useState<any[]>(cachedPairs || []);
   const [search, setSearch]       = useState('');
@@ -130,7 +132,7 @@ export default function Markets() {
 
           return (
             <div key={pair.symbol}
-              onClick={() => navigate(`/trade/${pair.symbol}`)}
+              onClick={() => navigate(fromFutures ? `/futures/${pair.symbol}` : `/trade/${pair.symbol}`)}
               style={{ display: 'flex', alignItems: 'center',
                        padding: '13px 16px', cursor: 'pointer',
                        borderBottom: '1px solid var(--color-border)',

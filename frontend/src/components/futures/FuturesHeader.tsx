@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import { CandlestickChart, Bell, MoreHorizontal, ChevronDown } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
@@ -17,6 +17,8 @@ export default function FuturesHeader({
   fundingRate = -0.005822, onCopyTrade
 }: Props) {
   const navigate = useNavigate();
+  const location = useLocation();
+  const isFutures = location.pathname.startsWith('/futures');
   const [countdown, setCountdown] = useState('');
   const [activeTab, setActiveTab] = useState('futures');
 
@@ -74,7 +76,7 @@ export default function FuturesHeader({
                     justifyContent: 'space-between', padding: '8px 12px 10px' }}>
         {/* Left: Symbol */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}
-             onClick={() => navigate('/markets')}>
+             onClick={() => navigate('/markets?from=' + (isFutures ? 'futures' : 'spot'))}>
           <span style={{ fontWeight: 700, fontSize: 18, color: 'var(--color-text)' }}>
             {baseSym}
           </span>
