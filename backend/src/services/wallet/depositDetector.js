@@ -114,13 +114,18 @@ class DepositDetector {
     this.running = true;
     console.log('🔍 Deposit Scanner started');
 
-    this.scanInterval = setInterval(async () => {
-      for (const key of Object.keys(this.providers)) {
+    // Per-network intervals: BSC=1hr (Alchemy backup), ETH/VDCHAIN=5min
+    const SCAN_INTERVALS = { BSC: 3600000, ETH: 300000, VDCHAIN: 300000 };
+    this.networkTimers = {};
+    for (const key of Object.keys(this.providers)) {
+      const ms = SCAN_INTERVALS[key] || 300000;
+      this.networkTimers[key] = setInterval(async () => {
         this.scanNetwork(key).catch(e =>
           console.error(`[${key}] scan error:`, e.message)
         );
-      }
-    }, 120000);
+      }, ms);
+      console.log(`[${key}] scan interval: ${ms/60000} min`);
+    }
 
     this.reloadInterval = setInterval(() => this.loadAddresses(), 5 * 60 * 1000);
 
@@ -134,6 +139,9 @@ class DepositDetector {
   stop() {
     this.running = false;
     if (this.scanInterval) clearInterval(this.scanInterval);
+    if (this.networkTimers) {
+      Object.values(this.networkTimers).forEach(t => clearInterval(t));
+    }
     if (this.reloadInterval) clearInterval(this.reloadInterval);
   }
 
@@ -242,7 +250,11 @@ class DepositDetector {
         });
       }
     } catch (err) {
-      console.error(`[${shortName}] ERC20 ${coin.symbol} scan error:`, err.message);
+      if (err.message && err.message.includes('limit exceeded')) {
+        console.log(`[${shortName}] ERC20 rate limited - will retry next cycle`);
+      } else {
+        console.error(`[${shortName}] ERC20 ${coin.symbol} scan error:`, err.message);
+      }
     }
   }
 
