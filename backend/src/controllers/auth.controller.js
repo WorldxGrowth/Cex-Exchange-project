@@ -371,6 +371,63 @@ const googleCallback = (req, res, next) => {
   })(req, res, next);
 };
 
+const forgotPassword = async (req, res) => {
+  try {
+    const { email } = req.body;
+    if (!email) return error(res, 'Email required');
+
+    const user = await db.query(
+      "SELECT id, email, full_name FROM users WHERE email = $1 AND status='active'",
+      [email.toLowerCase().trim()]
+    );
+    if (!user.rows[0]) return error(res, 'No account found with this email');
+
+    const otpService = require('../services/otpService');
+    const result = await otpService.sendOTP(email, 'password_reset');
+    if (!result.ok) return error(res, result.error || 'Failed to send OTP');
+
+    return success(res, {}, 'Password reset OTP sent to your email');
+  } catch (err) {
+    console.error('forgotPassword:', err.message);
+    return error(res, 'Failed', 500);
+  }
+};
+
+// ── RESET PASSWORD ────────────────────────────────
+const resetPassword = async (req, res) => {
+  try {
+    const { email, otp, new_password } = req.body;
+    if (!email || !otp || !new_password)
+      return error(res, 'email, otp and new_password required');
+
+    if (new_password.length < 8)
+      return error(res, 'Password must be at least 8 characters');
+
+    // Verify OTP
+    const otpService = require('../services/otpService');
+    const otpResult = await otpService.verifyOTP(email, otp, 'password_reset');
+    if (!otpResult.ok) return error(res, otpResult.error || 'Invalid or expired OTP');
+
+    // Hash new password
+    const bcrypt = require('bcryptjs');
+    const hash = await bcrypt.hash(new_password, 12);
+
+    // Update password
+    const result = await db.query(
+      'UPDATE users SET password_hash=$1, updated_at=NOW() WHERE email=$2 RETURNING id',
+      [hash, email.toLowerCase().trim()]
+    );
+    if (!result.rows[0]) return error(res, 'User not found');
+
+    return success(res, {}, 'Password reset successful! Please login.');
+  } catch (err) {
+    console.error('resetPassword:', err.message);
+    return error(res, 'Failed', 500);
+  }
+};
 module.exports = {
+  forgotPassword, resetPassword,
   register, login, logout, getMe, googleAuth, googleCallback
 };
+
+// ── FORGOT PASSWORD ───────────────────────────────
