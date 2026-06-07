@@ -74,6 +74,7 @@ export const adminAPI = {
   // Reports
   getTreasuryReport: (params) => api.get('/admin/reports/treasury', { params }),
   getVolumeReport: (params) => api.get('/admin/reports/volume', { params }),
+  getHoldingsReport: () => api.get('/admin/reports/holdings'),
 
   // Binance Credentials
   getBinanceCreds: () => api.get('/admin/binance-credentials'),

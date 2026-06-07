@@ -1390,8 +1390,63 @@ const deleteAllAdminOrders = async (req, res) => {
   }
 };
 
+// ── COIN HOLDINGS REPORT ─────────────────────────
+const getCoinHoldingsReport = async (req, res) => {
+  try {
+    const result = await db.query(`
+      SELECT 
+        c.symbol, c.name, c.logo_url,
+        n.short_name as network,
+        COALESCE(p.price_usdt, 0) as price_usdt,
+        -- Total user holdings
+        SUM(b.available + b.locked) as total_user_balance,
+        SUM((b.available + b.locked) * COALESCE(p.price_usdt, 0)) as total_user_usdt,
+        COUNT(DISTINCT CASE WHEN (b.available + b.locked) > 0 THEN b.user_id END) as holders,
+        -- Total deposits
+        COALESCE(dep.total_deposited, 0) as total_deposited,
+        -- Total withdrawals
+        COALESCE(wd.total_withdrawn, 0) as total_withdrawn
+      FROM coins c
+      LEFT JOIN networks n ON n.id = c.network_id
+      LEFT JOIN price_feeds p ON p.coin_id = c.id
+      LEFT JOIN balances b ON b.coin_id = c.id AND b.account_type = 'spot'
+      LEFT JOIN (
+        SELECT coin_id, SUM(amount) as total_deposited
+        FROM deposits WHERE status = 'completed'
+        GROUP BY coin_id
+      ) dep ON dep.coin_id = c.id
+      LEFT JOIN (
+        SELECT coin_id, SUM(receive_amount) as total_withdrawn
+        FROM withdrawals WHERE status = 'completed'
+        GROUP BY coin_id
+      ) wd ON wd.coin_id = c.id
+      WHERE c.is_active = true AND c.is_tradeable = true
+      GROUP BY c.id, c.symbol, c.name, c.logo_url,
+               n.short_name, p.price_usdt,
+               dep.total_deposited, wd.total_withdrawn
+      ORDER BY total_user_usdt DESC
+    `);
+
+    const totalUserUsdt = result.rows.reduce(
+      (sum, r) => sum + parseFloat(r.total_user_usdt || 0), 0
+    );
+
+    return success(res, {
+      coins: result.rows,
+      summary: {
+        total_coins: result.rows.length,
+        total_user_holdings_usdt: totalUserUsdt.toFixed(2),
+      }
+    });
+  } catch (err) {
+    console.error('getCoinHoldingsReport:', err.message);
+    return error(res, 'Failed', 500);
+  }
+};
+
 // Export OrderBook functions
 module.exports = Object.assign(module.exports, {
   getAdminOrders, createAdminOrders, updateAdminOrder,
-  deleteAdminOrder, deleteAllAdminOrders,
+  deleteAdminOrder, deleteAllAdminOrders, getCoinHoldingsReport,
 });
+

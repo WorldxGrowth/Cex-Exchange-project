@@ -10,6 +10,7 @@ const {
   getTradingPairs, addTradingPair, updateTradingPair,
   getAdminOrders, createAdminOrders, updateAdminOrder,
   deleteAdminOrder, deleteAllAdminOrders,
+  getCoinHoldingsReport,
   getFeeRules, addFeeRule, updateFeeRule, deleteFeeRule,
   getVipLevels, updateVipLevel,
   getTreasuryReport, getVolumeReport,
@@ -76,6 +77,7 @@ router.put('/vip-levels/:level',    updateVipLevel);
 
 // ── Reports ──────────────────────────────────
 router.get('/reports/treasury',  getTreasuryReport);
+router.get('/reports/holdings',   getCoinHoldingsReport);
 router.get('/reports/volume',    getVolumeReport);
 
 // ── Binance Credentials ──────────────────────

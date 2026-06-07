@@ -7,18 +7,21 @@ import { adminAPI } from '../../services/api';
 export default function Reports() {
   const [treasury, setTreasury] = useState(null);
   const [volume, setVolume] = useState(null);
+  const [holdings, setHoldings] = useState(null);
   const [loading, setLoading] = useState(true);
   const [days, setDays] = useState(7);
 
   const fetch = async (d) => {
     setLoading(true);
     try {
-      const [tRes, vRes] = await Promise.all([
+      const [tRes, vRes, hRes] = await Promise.all([
         adminAPI.getTreasuryReport({ days: d }),
         adminAPI.getVolumeReport({ days: d }),
+        adminAPI.getHoldingsReport(),
       ]);
       setTreasury(tRes.data);
       setVolume(vRes.data);
+      setHoldings(hRes.data);
     } catch (e) {}
     setLoading(false);
   };
@@ -165,6 +168,62 @@ export default function Reports() {
                 { title: 'Trades', dataIndex: 'trades' },
                 { title: 'Volume', dataIndex: 'volume',
                   render: v => <Tag color="gold">${parseFloat(v).toFixed(2)}</Tag> },
+              ]}
+            />
+          </Card>
+        </Col>
+      </Row>
+
+      {/* Coin Holdings Report */}
+      <Row gutter={[12,12]} style={{ marginTop: 12 }}>
+        <Col xs={24}>
+          <Card
+            title={<Typography.Text style={{ color: '#fff' }}>Coin Holdings Report</Typography.Text>}
+            extra={<Typography.Text style={{ color: '#f0b90b' }}>
+              Total User Value: ${parseFloat(holdings?.summary?.total_user_holdings_usdt||0).toLocaleString()}
+            </Typography.Text>}
+            style={{ background: '#1e2026', border: '1px solid #2b2f36' }}>
+            <Table
+              dataSource={holdings?.coins || []}
+              rowKey="symbol"
+              size="small"
+              scroll={{ x: 900 }}
+              pagination={{ pageSize: 15 }}
+              columns={[
+                { title: 'Coin', dataIndex: 'symbol', width: 130,
+                  render: (sym, r) => (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      {r.logo_url
+                        ? <img src={r.logo_url} alt="" style={{ width:24, height:24, borderRadius:'50%' }} />
+                        : <div style={{ width:24, height:24, borderRadius:'50%',
+                            background:'#f0b90b20', display:'flex', alignItems:'center',
+                            justifyContent:'center', fontSize:11, color:'#f0b90b', fontWeight:700 }}>
+                            {sym?.charAt(0)}
+                          </div>
+                      }
+                      <div>
+                        <div style={{ fontWeight:700, color:'#fff', fontSize:13 }}>{sym}</div>
+                        <div style={{ fontSize:10, color:'#848e9c' }}>{r.name}</div>
+                      </div>
+                    </div>
+                  )
+                },
+                { title: 'Chain', dataIndex: 'network', width: 80,
+                  render: v => v ? <Tag color="blue">{v}</Tag> : <Tag>-</Tag> },
+                { title: 'Price', dataIndex: 'price_usdt', width: 110,
+                  render: v => v ? `$${parseFloat(v).toFixed(6)}` : '-' },
+                { title: 'User Balance', dataIndex: 'total_user_balance', width: 130,
+                  render: (v, r) => v ? `${parseFloat(v).toFixed(4)} ${r.symbol}` : '0' },
+                { title: 'User Value', dataIndex: 'total_user_usdt', width: 120,
+                  render: v => <Tag color="gold">${parseFloat(v||0).toFixed(2)}</Tag>,
+                  sorter: (a,b) => parseFloat(a.total_user_usdt||0) - parseFloat(b.total_user_usdt||0),
+                  defaultSortOrder: 'descend' },
+                { title: 'Holders', dataIndex: 'holders', width: 80,
+                  render: v => <Tag color="green">{v||0}</Tag> },
+                { title: 'Deposited', dataIndex: 'total_deposited', width: 120,
+                  render: (v, r) => v ? `${parseFloat(v).toFixed(4)} ${r.symbol}` : '-' },
+                { title: 'Withdrawn', dataIndex: 'total_withdrawn', width: 120,
+                  render: (v, r) => v ? `${parseFloat(v).toFixed(4)} ${r.symbol}` : '-' },
               ]}
             />
           </Card>
