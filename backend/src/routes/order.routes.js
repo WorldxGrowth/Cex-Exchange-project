@@ -5,13 +5,16 @@ const {
   placeOrder, cancelOrder,
   getOpenOrders, getOrderHistory, getTradeHistory
 } = require('../controllers/order.controller');
+const {
+  orderPlaceLimiter
+} = require('../middleware/rateLimiter');
 
 router.use(authenticate);
 
-router.post('/place',         placeOrder);
-router.delete('/:order_id',   cancelOrder);
-router.get('/open',           getOpenOrders);
-router.get('/history',        getOrderHistory);
-router.get('/trades',         getTradeHistory);
+router.post('/place',       orderPlaceLimiter, placeOrder);
+router.delete('/:order_id',                    cancelOrder);
+router.get('/open',                            getOpenOrders);
+router.get('/history',                         getOrderHistory);
+router.get('/trades',                          getTradeHistory);
 
 module.exports = router;

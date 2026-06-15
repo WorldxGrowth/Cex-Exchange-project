@@ -29,12 +29,13 @@ const {
   adminSetup2FA, adminEnable2FA, adminDisable2FA, adminGet2FAStatus,
   adminToggleOTP, adminChangePinStep1, adminChangePinStep2,
 } = require('../controllers/admin.controller');
+const { adminLoginLimiter } = require('../middleware/rateLimiter');
 
 // ── Public Routes (No Auth) ───────────────────
-router.post('/verify-pin',  verifyAdminPin);
-router.post('/login',       adminLoginStep2);
-router.post('/verify-otp',  verifyAdminOTP);
-router.post('/verify-2fa',  verifyAdmin2FA);
+router.post('/verify-pin',  adminLoginLimiter, verifyAdminPin);
+router.post('/login',       adminLoginLimiter, adminLoginStep2);
+router.post('/verify-otp',  adminLoginLimiter, verifyAdminOTP);
+router.post('/verify-2fa',  adminLoginLimiter, verifyAdmin2FA);
 
 // ── All below require admin auth ──────────────
 router.use(adminAuth);
@@ -42,7 +43,7 @@ router.use(adminAuth);
 // ── Dashboard ─────────────────────────────────
 router.get('/dashboard', getDashboard);
 
-// ── Users ─────────────────────────────────────
+// ── Users ────────────────────────────────────
 router.get('/users',                   getUsers);
 router.get('/users/:id',               getUserDetail);
 router.put('/users/:id/status',        updateUserStatus);
@@ -138,13 +139,13 @@ router.put('/settings/:key', updateSetting);
 router.post('/settings',     addSetting);
 
 // ── Admin Security ────────────────────────────
-router.get('/security/2fa-status',          adminGet2FAStatus);
-router.post('/security/2fa-setup',          adminSetup2FA);
-router.post('/security/2fa-enable',         adminEnable2FA);
-router.post('/security/2fa-disable',        adminDisable2FA);
-router.post('/security/toggle-otp',         adminToggleOTP);
-router.post('/security/change-pin/step1',   adminChangePinStep1);
-router.post('/security/change-pin/step2',   adminChangePinStep2);
+router.get('/security/2fa-status',        adminGet2FAStatus);
+router.post('/security/2fa-setup',        adminSetup2FA);
+router.post('/security/2fa-enable',       adminEnable2FA);
+router.post('/security/2fa-disable',      adminDisable2FA);
+router.post('/security/toggle-otp',       adminToggleOTP);
+router.post('/security/change-pin/step1', adminChangePinStep1);
+router.post('/security/change-pin/step2', adminChangePinStep2);
 
 // ── Bot Management ───────────────────────────
 router.use('/bots', require('./bot.routes'));
