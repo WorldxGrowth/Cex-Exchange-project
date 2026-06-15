@@ -60,6 +60,7 @@ export default function Withdraw() {
   const [selectedNetwork, setSelectedNetwork] = useState<any>(NETWORKS[0]);
   const [showNetworkSheet, setShowNetworkSheet] = useState(false);
   const [result, setResult]                 = useState<any>(null);
+  const [idempotencyKey, setIdempotencyKey] = useState<string>('');
 
   // OTP
   const [emailOtp, setEmailOtp]   = useState(['','','','','','']);
@@ -131,6 +132,8 @@ export default function Withdraw() {
       { toast.error('Insufficient balance'); return; }
     setLoading(true);
     try {
+      const idemKey = 'WD-' + Date.now() + '-' + Math.random().toString(36).substr(2,9);
+      setIdempotencyKey(idemKey);
       await walletAPI.sendWithdrawalOTP();
       setStep('otp');
       startTimer(setResendSec);
@@ -164,6 +167,7 @@ export default function Withdraw() {
         coin: selectedCoin.symbol, network: selectedNetwork.id,
         amount, address, email_otp: emailCode,
         totp_code: withdrawInfo?.two_fa_enabled ? totpStr : undefined,
+        idempotency_key: idempotencyKey,
       });
       setResult(res.data);
       setStep('success');
