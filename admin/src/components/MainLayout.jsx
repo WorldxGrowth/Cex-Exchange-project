@@ -8,7 +8,7 @@ import {
   ArrowUpOutlined, RocketOutlined, MenuOutlined, CloseOutlined,
   BarChartOutlined, SwapOutlined, ApiOutlined, TrophyOutlined,
   PercentageOutlined, BankOutlined, GlobalOutlined, NotificationOutlined,
-  FileTextOutlined, OrderedListOutlined,
+  FileTextOutlined, OrderedListOutlined, LockOutlined,
 } from '@ant-design/icons';
 
 const { Header, Sider, Content } = Layout;
@@ -43,11 +43,11 @@ export default function MainLayout() {
       icon: <SwapOutlined />,
       label: 'Trading',
       children: [
-        { key: '/trading/pairs',     icon: <SwapOutlined />,          label: 'Pairs' },
-        { key: '/trading/fees',      icon: <PercentageOutlined />,    label: 'Fee Rules' },
-        { key: '/trading/vip',       icon: <TrophyOutlined />,        label: 'VIP Levels' },
-        { key: '/trading/binance',   icon: <ApiOutlined />,           label: 'Binance Creds' },
-        { key: '/trading/orderbook', icon: <OrderedListOutlined />,   label: 'OrderBook' },
+        { key: '/trading/pairs',     icon: <SwapOutlined />,        label: 'Pairs' },
+        { key: '/trading/fees',      icon: <PercentageOutlined />,  label: 'Fee Rules' },
+        { key: '/trading/vip',       icon: <TrophyOutlined />,      label: 'VIP Levels' },
+        { key: '/trading/binance',   icon: <ApiOutlined />,         label: 'Binance Creds' },
+        { key: '/trading/orderbook', icon: <OrderedListOutlined />, label: 'OrderBook' },
       ]
     },
     {
@@ -64,15 +64,16 @@ export default function MainLayout() {
       icon: <FileTextOutlined />,
       label: 'Content',
       children: [
-        { key: '/banners',               icon: <PictureOutlined />,    label: 'Banners' },
+        { key: '/banners',               icon: <PictureOutlined />,      label: 'Banners' },
         { key: '/content/announcements', icon: <NotificationOutlined />, label: 'Announcements' },
-        { key: '/content/cms',           icon: <FileTextOutlined />,   label: 'CMS Pages' },
+        { key: '/content/cms',           icon: <FileTextOutlined />,     label: 'CMS Pages' },
       ]
     },
     { key: '/reports',  icon: <BarChartOutlined />,   label: 'Reports' },
     { key: '/listings', icon: <RocketOutlined />,     label: 'Listings' },
     { key: '/scanner',  icon: <RadarChartOutlined />, label: 'Scanner' },
     { key: '/bots',     icon: <RobotOutlined />,      label: 'Market Bots' },
+    { key: '/security', icon: <LockOutlined />,       label: 'Security' },
     { key: '/settings', icon: <SettingOutlined />,    label: 'Settings' },
   ];
 

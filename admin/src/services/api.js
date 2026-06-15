@@ -143,3 +143,18 @@ Object.assign(adminAPI, {
   updateCmsPage:(id, data) => api.put(`/admin/cms/${id}`, data),
   deleteCmsPage:(id) => api.delete(`/admin/cms/${id}`),
 });
+
+// Admin Security (2FA)
+Object.assign(adminAPI, {
+  get2FAStatus:  () => api.get('/admin/security/2fa-status'),
+  setup2FA:      () => api.post('/admin/security/2fa-setup'),
+  enable2FA:     (data) => api.post('/admin/security/2fa-enable', data),
+  disable2FA:    (data) => api.post('/admin/security/2fa-disable', data),
+});
+
+// Admin Security (OTP Toggle + PIN Change)
+Object.assign(adminAPI, {
+  toggleOTP:        ()     => api.post('/admin/security/toggle-otp'),
+  changePinStep1:   (data) => api.post('/admin/security/change-pin/step1', data),
+  changePinStep2:   (data) => api.post('/admin/security/change-pin/step2', data),
+});

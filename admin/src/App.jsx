@@ -24,6 +24,7 @@ import WithdrawalSettings from './pages/finance/WithdrawalSettings';
 import Networks from './pages/finance/Networks';
 import Announcements from './pages/content/Announcements';
 import CmsPages from './pages/content/CmsPages';
+import AdminSecurity from './pages/security/AdminSecurity';
 
 const isAuth = () => !!localStorage.getItem('admin_token');
 const PrivateRoute = ({ children }) =>
@@ -47,28 +48,29 @@ export default function App() {
           <Route path="/login" element={<Login />} />
           <Route path="/" element={<PrivateRoute><MainLayout /></PrivateRoute>}>
             <Route index element={<Navigate to="/dashboard" />} />
-            <Route path="dashboard"           element={<Dashboard />} />
-            <Route path="users"               element={<Users />} />
-            <Route path="users/:id"           element={<UserDetail />} />
-            <Route path="kyc"                 element={<KYC />} />
-            <Route path="deposits"            element={<Deposits />} />
-            <Route path="withdrawals"         element={<Withdrawals />} />
-            <Route path="coins"               element={<Coins />} />
-            <Route path="trading/pairs"       element={<TradingPairs />} />
-            <Route path="trading/fees"        element={<FeeRules />} />
-            <Route path="trading/vip"         element={<VipLevels />} />
-            <Route path="trading/binance"     element={<BinanceCreds />} />
-            <Route path="trading/orderbook"  element={<OrderBook />} />
-            <Route path="finance/withdrawal-settings" element={<WithdrawalSettings />} />
-            <Route path="finance/networks"    element={<Networks />} />
-            <Route path="content/announcements" element={<Announcements />} />
-            <Route path="content/cms" element={<CmsPages />} />
-            <Route path="reports"             element={<Reports />} />
-            <Route path="listings"            element={<Listings />} />
-            <Route path="scanner"             element={<Scanner />} />
-            <Route path="banners"             element={<Banners />} />
-            <Route path="bots"                element={<Bots />} />
-            <Route path="settings"            element={<Settings />} />
+            <Route path="dashboard"                      element={<Dashboard />} />
+            <Route path="users"                          element={<Users />} />
+            <Route path="users/:id"                      element={<UserDetail />} />
+            <Route path="kyc"                            element={<KYC />} />
+            <Route path="deposits"                       element={<Deposits />} />
+            <Route path="withdrawals"                    element={<Withdrawals />} />
+            <Route path="coins"                          element={<Coins />} />
+            <Route path="trading/pairs"                  element={<TradingPairs />} />
+            <Route path="trading/fees"                   element={<FeeRules />} />
+            <Route path="trading/vip"                    element={<VipLevels />} />
+            <Route path="trading/binance"                element={<BinanceCreds />} />
+            <Route path="trading/orderbook"              element={<OrderBook />} />
+            <Route path="finance/withdrawal-settings"    element={<WithdrawalSettings />} />
+            <Route path="finance/networks"               element={<Networks />} />
+            <Route path="content/announcements"          element={<Announcements />} />
+            <Route path="content/cms"                    element={<CmsPages />} />
+            <Route path="reports"                        element={<Reports />} />
+            <Route path="listings"                       element={<Listings />} />
+            <Route path="scanner"                        element={<Scanner />} />
+            <Route path="banners"                        element={<Banners />} />
+            <Route path="bots"                           element={<Bots />} />
+            <Route path="settings"                       element={<Settings />} />
+            <Route path="security"                       element={<AdminSecurity />} />
           </Route>
         </Routes>
       </BrowserRouter>

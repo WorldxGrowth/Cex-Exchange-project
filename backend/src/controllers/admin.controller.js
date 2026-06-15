@@ -1497,6 +1497,518 @@ const resetPassword = async (req, res) => {
   }
 };
 
+// ================================
+// ADMIN STEP TOKEN HELPER
+// ================================
+const generateStepToken = (adminId, step) => {
+  const jwt = require('jsonwebtoken');
+  return jwt.sign(
+    { adminId: parseInt(adminId), step: parseInt(step) },
+    process.env.JWT_SECRET + '_step',
+    { expiresIn: '5m' }
+  );
+};
+
+const verifyStepToken = (token, expectedStep) => {
+  try {
+    const jwt = require('jsonwebtoken');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET + '_step');
+    if (decoded.step !== expectedStep) return null;
+    return decoded;
+  } catch (e) {
+    return null;
+  }
+};
+
+// ================================
+// STEP 1: VERIFY PIN
+// ================================
+const verifyAdminPin = async (req, res) => {
+  try {
+    const { pin } = req.body;
+    if (!pin || pin.toString().length !== 8) {
+      return error(res, 'PIN must be 8 digits');
+    }
+
+    // Get admin (only 1 admin for now)
+    const result = await db.query(
+      'SELECT * FROM admin_users WHERE is_active = true LIMIT 1'
+    );
+    const admin = result.rows[0];
+    if (!admin) return error(res, 'Invalid PIN');
+
+    // Check lockout
+    if (admin.pin_locked_until && new Date() < new Date(admin.pin_locked_until)) {
+      const remaining = Math.ceil((new Date(admin.pin_locked_until) - new Date()) / 60000);
+      return error(res, `Too many wrong attempts. Try after ${remaining} minutes.`);
+    }
+
+    // PIN not set
+    if (!admin.pin) return error(res, 'PIN not configured. Contact system administrator.');
+
+    // Verify PIN
+    const isValid = await bcrypt.compare(pin.toString(), admin.pin);
+    if (!isValid) {
+      const attempts = (admin.pin_attempts || 0) + 1;
+      if (attempts >= 3) {
+        // Lock for 30 minutes
+        await db.query(
+          'UPDATE admin_users SET pin_attempts=$1, pin_locked_until=NOW()+INTERVAL\'30 minutes\' WHERE id=$2',
+          [attempts, admin.id]
+        );
+        return error(res, 'Too many wrong attempts. Account locked for 30 minutes.');
+      }
+      await db.query(
+        'UPDATE admin_users SET pin_attempts=$1 WHERE id=$2',
+        [attempts, admin.id]
+      );
+      return error(res, `Wrong PIN. ${3 - attempts} attempts remaining.`);
+    }
+
+    // Reset attempts on success
+    await db.query(
+      'UPDATE admin_users SET pin_attempts=0, pin_locked_until=NULL WHERE id=$1',
+      [admin.id]
+    );
+
+    // Generate step token (step 1 complete)
+    const stepToken = generateStepToken(admin.id, 1);
+    return success(res, { step_token: stepToken, next_step: 2 }, 'PIN verified');
+
+  } catch (err) {
+    console.error('[AdminAuth] verifyPin error:', err.message);
+    return error(res, 'Verification failed', 500);
+  }
+};
+
+// ================================
+// STEP 2: EMAIL + PASSWORD LOGIN
+// ================================
+const adminLoginStep2 = async (req, res) => {
+  try {
+    const { email, password, step_token } = req.body;
+    if (!email || !password || !step_token) {
+      return error(res, 'Email, password and step_token required');
+    }
+
+    // Verify step token (must be step 1)
+    const decoded = verifyStepToken(step_token, 1);
+    if (!decoded) return error(res, 'Invalid or expired session. Start from PIN.');
+
+    const result = await db.query(
+      'SELECT * FROM admin_users WHERE id=$1 AND is_active=true',
+      [decoded.adminId]
+    );
+    const admin = result.rows[0];
+    if (!admin) return error(res, 'Invalid credentials');
+
+    if (admin.email.toLowerCase() !== email.toLowerCase()) {
+      return error(res, 'Invalid credentials');
+    }
+
+    // Verify password
+    const isValid = await bcrypt.compare(password, admin.password_hash);
+    if (!isValid) return error(res, 'Invalid credentials');
+
+    // Update last login
+    await db.query('UPDATE admin_users SET last_login_at=NOW() WHERE id=$1', [admin.id]);
+
+    // If OTP enabled → send OTP, go to step 3
+    if (admin.otp_enabled) {
+      const otpService = require('../services/otpService');
+      const otpResult = await otpService.sendOTP(admin.email, 'admin_login');
+      if (!otpResult.ok) return error(res, 'Failed to send OTP: ' + otpResult.error);
+
+      const stepToken = generateStepToken(admin.id, 2);
+      return success(res, {
+        step_token: stepToken,
+        next_step: 3,
+        otp_sent: true,
+        email_hint: admin.email.replace(/(.{2}).+(@.+)/, '$1***$2')
+      }, 'Password verified. OTP sent to email.');
+    }
+
+    // If 2FA enabled → go to step 4
+    if (admin.two_fa_enabled) {
+      const stepToken = generateStepToken(admin.id, 3);
+      return success(res, {
+        step_token: stepToken,
+        next_step: 4
+      }, 'Password verified. Enter 2FA code.');
+    }
+
+    // No OTP, no 2FA → issue final token
+    const { accessToken } = generateTokens(admin.id);
+    return success(res, {
+      access_token: accessToken,
+      admin: { id: admin.id, email: admin.email, role: admin.role }
+    }, 'Login successful');
+
+  } catch (err) {
+    console.error('[AdminAuth] loginStep2 error:', err.message);
+    return error(res, 'Login failed', 500);
+  }
+};
+
+// ================================
+// STEP 3: VERIFY OTP
+// ================================
+const verifyAdminOTP = async (req, res) => {
+  try {
+    const { otp, step_token } = req.body;
+    if (!otp || !step_token) return error(res, 'OTP and step_token required');
+
+    // Verify step token (must be step 2)
+    const decoded = verifyStepToken(step_token, 2);
+    if (!decoded) return error(res, 'Invalid or expired session. Start from PIN.');
+
+    const result = await db.query(
+      'SELECT * FROM admin_users WHERE id=$1 AND is_active=true',
+      [decoded.adminId]
+    );
+    const admin = result.rows[0];
+    if (!admin) return error(res, 'Admin not found');
+
+    // Verify OTP
+    const otpService = require('../services/otpService');
+    const otpResult = await otpService.verifyOTP(admin.email, otp, 'admin_login');
+    if (!otpResult.ok) return error(res, otpResult.error);
+
+    // If 2FA also enabled → go to step 4
+    if (admin.two_fa_enabled) {
+      const stepToken = generateStepToken(admin.id, 3);
+      return success(res, {
+        step_token: stepToken,
+        next_step: 4
+      }, 'OTP verified. Enter 2FA code.');
+    }
+
+    // OTP done, no 2FA → issue final token
+    const { accessToken } = generateTokens(admin.id);
+    return success(res, {
+      access_token: accessToken,
+      admin: { id: admin.id, email: admin.email, role: admin.role }
+    }, 'Login successful');
+
+  } catch (err) {
+    console.error('[AdminAuth] verifyOTP error:', err.message);
+    return error(res, 'OTP verification failed', 500);
+  }
+};
+
+// ================================
+// STEP 4: VERIFY 2FA TOTP
+// ================================
+const verifyAdmin2FA = async (req, res) => {
+  try {
+    const { totp_code, step_token } = req.body;
+    if (!totp_code || !step_token) return error(res, 'TOTP code and step_token required');
+
+    // Verify step token (must be step 3)
+    const decoded = verifyStepToken(step_token, 3);
+    if (!decoded) return error(res, 'Invalid or expired session. Start from PIN.');
+
+    const result = await db.query(
+      'SELECT * FROM admin_users WHERE id=$1 AND is_active=true',
+      [decoded.adminId]
+    );
+    const admin = result.rows[0];
+    if (!admin) return error(res, 'Admin not found');
+
+    if (!admin.two_fa_secret) return error(res, '2FA not configured');
+
+    // Verify TOTP
+    const speakeasy = require('speakeasy');
+    const isValid = speakeasy.totp.verify({
+      secret: admin.two_fa_secret,
+      encoding: 'base32',
+      token: totp_code.toString(),
+      window: 2
+    });
+
+    if (!isValid) return error(res, 'Invalid 2FA code');
+
+    // All steps done → issue final token
+    const { accessToken } = generateTokens(admin.id);
+    return success(res, {
+      access_token: accessToken,
+      admin: { id: admin.id, email: admin.email, role: admin.role }
+    }, 'Login successful');
+
+  } catch (err) {
+    console.error('[AdminAuth] verify2FA error:', err.message);
+    return error(res, '2FA verification failed', 500);
+  }
+};
+
+// ================================
+// ADMIN 2FA MANAGEMENT
+// ================================
+const adminSetup2FA = async (req, res) => {
+  try {
+    const speakeasy = require('speakeasy');
+    const QRCode = require('qrcode');
+    const { cache } = require('../config/redis');
+
+    const admin = await db.query(
+      'SELECT * FROM admin_users WHERE id=$1 AND is_active=true',
+      [req.adminId]
+    );
+    if (!admin.rows[0]) return error(res, 'Admin not found');
+
+    const secret = speakeasy.generateSecret({
+      name: `VDExchange Admin (${admin.rows[0].email})`,
+      length: 32
+    });
+
+    // Redis mein temp store (10 min)
+    await cache.set(`admin_2fa_setup:${req.adminId}`, {
+      secret: secret.base32,
+      otpauth_url: secret.otpauth_url
+    }, 600);
+
+    const qrCodeDataUrl = await QRCode.toDataURL(secret.otpauth_url);
+
+    return success(res, {
+      secret: secret.base32,
+      qr_code: qrCodeDataUrl,
+      otpauth_url: secret.otpauth_url
+    }, '2FA setup initiated. Scan QR code.');
+
+  } catch (err) {
+    console.error('[Admin2FA] setup error:', err.message);
+    return error(res, 'Setup failed', 500);
+  }
+};
+
+const adminEnable2FA = async (req, res) => {
+  try {
+    const speakeasy = require('speakeasy');
+    const { cache } = require('../config/redis');
+    const { totp_code } = req.body;
+
+    if (!totp_code) return error(res, 'TOTP code required');
+
+    // Redis se temp secret lo
+    const setupData = await cache.get(`admin_2fa_setup:${req.adminId}`);
+    if (!setupData) return error(res, 'Setup expired. Start again.');
+
+    // Verify code
+    const isValid = speakeasy.totp.verify({
+      secret: setupData.secret,
+      encoding: 'base32',
+      token: totp_code.toString().replace(/\s/g, ''),
+      window: 2
+    });
+
+    if (!isValid) return error(res, 'Invalid code. Try again.');
+
+    // DB mein save + enable
+    await db.query(
+      'UPDATE admin_users SET two_fa_secret=$1, two_fa_enabled=true WHERE id=$2',
+      [setupData.secret, req.adminId]
+    );
+
+    // Redis cleanup
+    await cache.del(`admin_2fa_setup:${req.adminId}`);
+
+    return success(res, {}, '2FA enabled successfully! Login will now require 2FA.');
+
+  } catch (err) {
+    console.error('[Admin2FA] enable error:', err.message);
+    return error(res, 'Enable failed', 500);
+  }
+};
+
+const adminDisable2FA = async (req, res) => {
+  try {
+    const speakeasy = require('speakeasy');
+    const { totp_code } = req.body;
+
+    if (!totp_code) return error(res, 'TOTP code required to disable 2FA');
+
+    const admin = await db.query(
+      'SELECT * FROM admin_users WHERE id=$1 AND is_active=true',
+      [req.adminId]
+    );
+    if (!admin.rows[0]) return error(res, 'Admin not found');
+    if (!admin.rows[0].two_fa_enabled) return error(res, '2FA is not enabled');
+    if (!admin.rows[0].two_fa_secret) return error(res, '2FA secret not found');
+
+    const isValid = speakeasy.totp.verify({
+      secret: admin.rows[0].two_fa_secret,
+      encoding: 'base32',
+      token: totp_code.toString().replace(/\s/g, ''),
+      window: 2
+    });
+
+    if (!isValid) return error(res, 'Invalid TOTP code');
+
+    await db.query(
+      'UPDATE admin_users SET two_fa_enabled=false, two_fa_secret=NULL WHERE id=$1',
+      [req.adminId]
+    );
+
+    return success(res, {}, '2FA disabled successfully.');
+
+  } catch (err) {
+    console.error('[Admin2FA] disable error:', err.message);
+    return error(res, 'Disable failed', 500);
+  }
+};
+
+const adminGet2FAStatus = async (req, res) => {
+  try {
+    const admin = await db.query(
+      'SELECT two_fa_enabled, otp_enabled, email FROM admin_users WHERE id=$1',
+      [req.adminId]
+    );
+    if (!admin.rows[0]) return error(res, 'Admin not found');
+
+    return success(res, {
+      two_fa_enabled: admin.rows[0].two_fa_enabled || false,
+      otp_enabled: admin.rows[0].otp_enabled || false,
+      email: admin.rows[0].email
+    });
+  } catch (err) {
+    return error(res, 'Failed', 500);
+  }
+};
+
+// ================================
+// ADMIN OTP TOGGLE
+// ================================
+const adminToggleOTP = async (req, res) => {
+  try {
+    const admin = await db.query(
+      'SELECT otp_enabled FROM admin_users WHERE id=$1 AND is_active=true',
+      [req.adminId]
+    );
+    if (!admin.rows[0]) return error(res, 'Admin not found');
+
+    const newValue = !admin.rows[0].otp_enabled;
+    await db.query(
+      'UPDATE admin_users SET otp_enabled=$1 WHERE id=$2',
+      [newValue, req.adminId]
+    );
+
+    return success(res, { otp_enabled: newValue },
+      newValue ? 'Gmail OTP enabled' : 'Gmail OTP disabled');
+  } catch (err) {
+    console.error('[AdminSecurity] toggleOTP error:', err.message);
+    return error(res, 'Toggle failed', 500);
+  }
+};
+
+// ================================
+// ADMIN CHANGE PIN
+// Flow: current_pin verify → Gmail OTP verify → new_pin set
+// Step A: POST /security/change-pin/verify-current → verify current PIN + send OTP
+// Step B: POST /security/change-pin/confirm → verify OTP + set new PIN
+// ================================
+const adminChangePinStep1 = async (req, res) => {
+  try {
+    const { current_pin, new_pin, confirm_pin } = req.body;
+
+    if (!current_pin || !new_pin || !confirm_pin)
+      return error(res, 'current_pin, new_pin and confirm_pin required');
+
+    if (new_pin.toString().length !== 8 || !/^\d+$/.test(new_pin.toString()))
+      return error(res, 'New PIN must be exactly 8 digits');
+
+    if (new_pin.toString() !== confirm_pin.toString())
+      return error(res, 'New PIN and confirm PIN do not match');
+
+    const admin = await db.query(
+      'SELECT * FROM admin_users WHERE id=$1 AND is_active=true',
+      [req.adminId]
+    );
+    if (!admin.rows[0]) return error(res, 'Admin not found');
+
+    // Check lockout
+    if (admin.rows[0].pin_locked_until && new Date() < new Date(admin.rows[0].pin_locked_until)) {
+      const remaining = Math.ceil((new Date(admin.rows[0].pin_locked_until) - new Date()) / 60000);
+      return error(res, `Account locked. Try after ${remaining} minutes.`);
+    }
+
+    // Verify current PIN
+    const isValid = await bcrypt.compare(current_pin.toString(), admin.rows[0].pin);
+    if (!isValid) {
+      const attempts = (admin.rows[0].pin_attempts || 0) + 1;
+      if (attempts >= 3) {
+        await db.query(
+          "UPDATE admin_users SET pin_attempts=$1, pin_locked_until=NOW()+INTERVAL'30 minutes' WHERE id=$2",
+          [attempts, req.adminId]
+        );
+        return error(res, 'Too many wrong attempts. Account locked for 30 minutes.');
+      }
+      await db.query('UPDATE admin_users SET pin_attempts=$1 WHERE id=$2', [attempts, req.adminId]);
+      return error(res, `Wrong current PIN. ${3 - attempts} attempts remaining.`);
+    }
+
+    // Reset attempts
+    await db.query('UPDATE admin_users SET pin_attempts=0, pin_locked_until=NULL WHERE id=$1', [req.adminId]);
+
+    // Send Gmail OTP for confirmation
+    const otpService = require('../services/otpService');
+    const otpResult = await otpService.sendOTP(admin.rows[0].email, 'admin_login');
+    if (!otpResult.ok) return error(res, 'Failed to send OTP: ' + otpResult.error);
+
+    // Store new_pin temporarily in Redis
+    const { cache } = require('../config/redis');
+    await cache.set(`admin_pin_change:${req.adminId}`, {
+      new_pin: new_pin.toString()
+    }, 300); // 5 min
+
+    return success(res, {
+      email_hint: admin.rows[0].email.replace(/(.{2}).+(@.+)/, '$1***$2')
+    }, 'Current PIN verified. OTP sent to email.');
+
+  } catch (err) {
+    console.error('[AdminSecurity] changePinStep1 error:', err.message);
+    return error(res, 'Failed', 500);
+  }
+};
+
+const adminChangePinStep2 = async (req, res) => {
+  try {
+    const { otp } = req.body;
+    if (!otp) return error(res, 'OTP required');
+
+    const admin = await db.query(
+      'SELECT email FROM admin_users WHERE id=$1 AND is_active=true',
+      [req.adminId]
+    );
+    if (!admin.rows[0]) return error(res, 'Admin not found');
+
+    // Verify OTP
+    const otpService = require('../services/otpService');
+    const otpResult = await otpService.verifyOTP(admin.rows[0].email, otp, 'admin_login');
+    if (!otpResult.ok) return error(res, otpResult.error);
+
+    // Get new PIN from Redis
+    const { cache } = require('../config/redis');
+    const pinData = await cache.get(`admin_pin_change:${req.adminId}`);
+    if (!pinData) return error(res, 'Session expired. Start PIN change again.');
+
+    // Hash and save new PIN
+    const newHash = await bcrypt.hash(pinData.new_pin, 12);
+    await db.query(
+      'UPDATE admin_users SET pin=$1, pin_attempts=0, pin_locked_until=NULL WHERE id=$2',
+      [newHash, req.adminId]
+    );
+
+    // Cleanup Redis
+    await cache.del(`admin_pin_change:${req.adminId}`);
+
+    return success(res, {}, 'PIN changed successfully!');
+
+  } catch (err) {
+    console.error('[AdminSecurity] changePinStep2 error:', err.message);
+    return error(res, 'Failed', 500);
+  }
+};
+
 // ── FINAL MODULE EXPORTS (पूरी फाइल के सारे फंक्शन्स एक ही जगह) ──
 module.exports = Object.assign(module.exports, {
   // Withdrawal & Networks
@@ -1529,5 +2041,20 @@ module.exports = Object.assign(module.exports, {
 
   // Auth / Password
   forgotPassword, 
-  resetPassword
+  resetPassword,
+  
+  // === यहाँ आपके नए Step Auth फंक्शन्स जुड़ गए ===
+  verifyAdminPin,
+  adminLoginStep2,
+  verifyAdminOTP,
+  verifyAdmin2FA,
+  
+  //admin security
+  adminSetup2FA,
+  adminEnable2FA,
+  adminDisable2FA,
+  adminGet2FAStatus,
+  adminToggleOTP,
+  adminChangePinStep1,
+  adminChangePinStep2
 });
