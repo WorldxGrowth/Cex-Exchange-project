@@ -26,7 +26,6 @@ const updateProfile = async (req, res) => {
             language, theme, gender, avatar,
             state, city, pincode, phone } = req.body;
 
-    // Phone unique check
     if (phone) {
       const ex = await db.query(
         'SELECT id FROM users WHERE phone=$1 AND id!=$2', [phone, req.user.id]
@@ -96,11 +95,14 @@ const changePassword = async (req, res) => {
     const valid = await bcrypt.compare(current_password, user.rows[0].password_hash);
     if (!valid) return error(res, 'Current password incorrect');
     const hash = await bcrypt.hash(new_password, 12);
-    await db.query(
-      'UPDATE users SET password_hash=$1, updated_at=NOW() WHERE id=$2',
-      [hash, req.user.id]
-    );
-    return success(res, {}, 'Password changed');
+    await db.query(`
+      UPDATE users
+      SET password_hash=$1,
+          updated_at=NOW(),
+          withdraw_locked_until=NOW() + INTERVAL '24 hours'
+      WHERE id=$2
+    `, [hash, req.user.id]);
+    return success(res, {}, 'Password changed. Withdrawals locked for 24 hours for security.');
   } catch (err) { return error(res, 'Failed', 500); }
 };
 

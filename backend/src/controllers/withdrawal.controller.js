@@ -153,6 +153,19 @@ const requestWithdrawal = async (req, res) => {
       return error(res, 'Withdrawal already in progress. Please wait.');
     }
 
+    // ── WITHDRAWAL LOCK CHECK ─────────────────────
+    const lockCheck = await db.query(
+      'SELECT withdraw_locked_until FROM users WHERE id=$1',
+      [req.user.id]
+    );
+    const lockedUntil = lockCheck.rows[0]?.withdraw_locked_until;
+    if (lockedUntil && new Date() < new Date(lockedUntil)) {
+      await redis.del(lockKey);
+      await client.query('ROLLBACK');
+      const remaining = Math.ceil((new Date(lockedUntil) - new Date()) / 3600000);
+      return error(res, `Withdrawals locked for security. Try after ${remaining} hour(s). This happens after password or 2FA changes.`);
+    }
+
     // ── LAYER 2: Idempotency Key check ────────────
     if (idempotency_key) {
       const existing = await client.query(

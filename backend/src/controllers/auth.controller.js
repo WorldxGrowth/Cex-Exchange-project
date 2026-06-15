@@ -6,7 +6,6 @@ const { generateTokens }             = require('../utils/jwt');
 const { generateUID, generateReferralCode } = require('../utils/helpers');
 const { success, error }             = require('../utils/response');
 
-// Email helper - always safe
 const sendEmail = async (fn, ...args) => {
   try {
     const emailService = require('../services/email/emailService');
@@ -16,7 +15,6 @@ const sendEmail = async (fn, ...args) => {
   }
 };
 
-// ── Get real IP + Device + Location ──────────────
 const getRequestInfo = (req) => {
   try {
     const ip =
@@ -27,38 +25,25 @@ const getRequestInfo = (req) => {
       '0.0.0.0';
 
     const cleanIp = ip.replace('::ffff:', '');
-    // IPv6 to IPv4 convert if possible
-    const lookupIp = cleanIp.includes(':') && !cleanIp.startsWith('::ffff:')
-      ? cleanIp  // real IPv6
-      : cleanIp.replace('::ffff:', '');
-
     const parser = new UAParser(req.headers['user-agent']);
     const ua     = parser.getResult();
-
     const deviceType = ua.device.type || 'desktop';
     const browser    = ua.browser.name || 'Unknown';
     const os         = ua.os.name || 'Unknown';
     const model      = ua.device.model || '';
-
-    // Try IPv6 first, fallback to IPv4
     let geo = geoip.lookup(cleanIp) || {};
     if (!geo.country && cleanIp.includes(':')) {
-      // Try with ipv6 lookup
       geo = geoip.lookup(cleanIp) || {};
     }
-
     const time = new Date().toLocaleString('en-IN', {
       timeZone: 'Asia/Kolkata',
       day: '2-digit', month: '2-digit', year: 'numeric',
       hour: '2-digit', minute: '2-digit', hour12: true
     });
-
     return {
-      ip:      cleanIp,
-      device:  deviceType.charAt(0).toUpperCase() + deviceType.slice(1),
-      browser,
-      os,
-      model,
+      ip: cleanIp,
+      device: deviceType.charAt(0).toUpperCase() + deviceType.slice(1),
+      browser, os, model,
       country: geo.country || '',
       city:    geo.city    || '',
       time,
@@ -72,7 +57,6 @@ const getRequestInfo = (req) => {
   }
 };
 
-// ── Alchemy address register helper (non-blocking) ─
 const registerAddressToAlchemy = async (userId) => {
   try {
     if (process.env.ALCHEMY_NOTIFY_ENABLED !== 'true') return;
@@ -143,7 +127,6 @@ const register = async (req, res) => {
 
     const { accessToken, refreshToken } = generateTokens(user.id);
     const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-
     const reqInfo = getRequestInfo(req);
 
     await db.query(`
@@ -159,10 +142,7 @@ const register = async (req, res) => {
       VALUES ($1, 'register', $2, 'success')
     `, [user.id, reqInfo.ip]);
 
-    // Welcome email - async safe
     sendEmail('sendWelcomeEmail', user);
-
-    // Alchemy - async non-blocking
     setTimeout(() => registerAddressToAlchemy(user.id), 3000);
 
     return success(res, {
@@ -215,8 +195,6 @@ const login = async (req, res) => {
     if (user.status === 'suspended') return error(res, 'Account suspended');
 
     const isValid = await bcrypt.compare(password, user.password_hash);
-
-    // Get request info for logging
     const reqInfo = getRequestInfo(req);
 
     if (!isValid) {
@@ -230,15 +208,14 @@ const login = async (req, res) => {
       return error(res, 'Invalid credentials');
     }
 
-    // Check 2FA
     const twoFA       = await db.query(
       'SELECT * FROM two_factor_auth WHERE user_id = $1', [user.id]
     );
     const twoFAEnabled = twoFA.rows[0]?.is_enabled || false;
 
     if (twoFAEnabled) {
-      const tempToken    = require('crypto').randomBytes(32).toString('hex');
-      const { cache }    = require('../config/redis');
+      const tempToken = require('crypto').randomBytes(32).toString('hex');
+      const { cache } = require('../config/redis');
       await cache.set(`2fa_temp:${tempToken}`, { userId: user.id }, 300);
       return success(res,
         { requires_2fa: true, temp_token: tempToken },
@@ -271,7 +248,6 @@ const login = async (req, res) => {
         reqInfo.device.toLowerCase() || 'web',
         req.headers['user-agent']]);
 
-    // Login alert email with full device info - async safe
     sendEmail('sendLoginAlertEmail', user, {
       ip:      reqInfo.ip,
       device:  reqInfo.device,
@@ -371,6 +347,9 @@ const googleCallback = (req, res, next) => {
   })(req, res, next);
 };
 
+// ================================
+// FORGOT PASSWORD
+// ================================
 const forgotPassword = async (req, res) => {
   try {
     const { email } = req.body;
@@ -393,7 +372,9 @@ const forgotPassword = async (req, res) => {
   }
 };
 
-// ── RESET PASSWORD ────────────────────────────────
+// ================================
+// RESET PASSWORD
+// ================================
 const resetPassword = async (req, res) => {
   try {
     const { email, otp, new_password } = req.body;
@@ -403,31 +384,31 @@ const resetPassword = async (req, res) => {
     if (new_password.length < 8)
       return error(res, 'Password must be at least 8 characters');
 
-    // Verify OTP
     const otpService = require('../services/otpService');
     const otpResult = await otpService.verifyOTP(email, otp, 'password_reset');
     if (!otpResult.ok) return error(res, otpResult.error || 'Invalid or expired OTP');
 
-    // Hash new password
-    const bcrypt = require('bcryptjs');
     const hash = await bcrypt.hash(new_password, 12);
 
-    // Update password
-    const result = await db.query(
-      'UPDATE users SET password_hash=$1, updated_at=NOW() WHERE email=$2 RETURNING id',
-      [hash, email.toLowerCase().trim()]
-    );
+    const result = await db.query(`
+      UPDATE users
+      SET password_hash=$1,
+          updated_at=NOW(),
+          withdraw_locked_until=NOW() + INTERVAL '24 hours'
+      WHERE email=$2
+      RETURNING id
+    `, [hash, email.toLowerCase().trim()]);
+
     if (!result.rows[0]) return error(res, 'User not found');
 
-    return success(res, {}, 'Password reset successful! Please login.');
+    return success(res, {}, 'Password reset successful! Withdrawals locked for 24 hours for security. Please login.');
   } catch (err) {
     console.error('resetPassword:', err.message);
     return error(res, 'Failed', 500);
   }
 };
+
 module.exports = {
   forgotPassword, resetPassword,
   register, login, logout, getMe, googleAuth, googleCallback
 };
-
-// ── FORGOT PASSWORD ───────────────────────────────
