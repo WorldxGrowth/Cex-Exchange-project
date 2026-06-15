@@ -133,7 +133,7 @@ const requestWithdrawal = async (req, res) => {
   try {
     await client.query('BEGIN');
 
-    const { coin, network, amount, address, email_otp, totp_code } = req.body;
+    const { coin, network, amount, address, email_otp, totp_code, idempotency_key } = req.body;
 
     if (!coin || !amount || !address)
       return error(res, 'coin, amount, address required');
@@ -143,6 +143,32 @@ const requestWithdrawal = async (req, res) => {
 
     if (!ethers.utils.isAddress(address))
       return error(res, 'Invalid wallet address');
+
+    // ── LAYER 1: Redis Lock (5 sec window) ────────
+    const { redis } = require('../config/redis');
+    const lockKey = `withdraw_lock:${req.user.id}`;
+    const lockSet = await redis.set(lockKey, '1', 'EX', 5, 'NX');
+    if (!lockSet) {
+      await client.query('ROLLBACK');
+      return error(res, 'Withdrawal already in progress. Please wait.');
+    }
+
+    // ── LAYER 2: Idempotency Key check ────────────
+    if (idempotency_key) {
+      const existing = await client.query(
+        'SELECT id, status, tx_id FROM withdrawals WHERE idempotency_key = $1',
+        [idempotency_key]
+      );
+      if (existing.rows[0]) {
+        await redis.del(lockKey);
+        await client.query('ROLLBACK');
+        return success(res, {
+          tx_id: existing.rows[0].tx_id,
+          status: existing.rows[0].status,
+          duplicate: true
+        }, 'Withdrawal already submitted');
+      }
+    }
 
     // ── Email OTP verify ──────────────────────────
     if (!email_otp) return error(res, 'Email OTP required');
@@ -235,12 +261,15 @@ const requestWithdrawal = async (req, res) => {
     const withdrawal = await client.query(`
       INSERT INTO withdrawals
         (user_id, coin_id, network_id, tx_id, to_address,
-         amount, fee, receive_amount, status, two_fa_verified, created_at)
-      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NOW())
+         amount, fee, receive_amount, status, two_fa_verified,
+         idempotency_key, ip_address, created_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,NOW())
       RETURNING *
     `, [req.user.id, c.coin_id, c.network_id, txId,
         address, amt, feeQty, receiveAmt, status,
-        twofa.rows[0]?.is_enabled || false]);
+        twofa.rows[0]?.is_enabled || false,
+        idempotency_key || null,
+        req.ip || null]);
 
     await client.query(`
       INSERT INTO ledger (user_id, coin_id, type, amount,
@@ -252,6 +281,9 @@ const requestWithdrawal = async (req, res) => {
     ]).catch(() => {});
 
     await client.query('COMMIT');
+
+    // ── Release Redis lock after successful commit ─
+    redis.del(lockKey).catch(() => {});
 
     db.query('SELECT email FROM users WHERE id = $1', [req.user.id])
       .then(u => {
@@ -278,6 +310,11 @@ const requestWithdrawal = async (req, res) => {
 
   } catch (err) {
     await client.query('ROLLBACK');
+    // Release lock on error too
+    try {
+      const { redis: r } = require('../config/redis');
+      await r.del(`withdraw_lock:${req.user.id}`);
+    } catch (_) {}
     console.error('requestWithdrawal:', err.message);
     return error(res, err.message || 'Failed', 500);
   } finally { client.release(); }
