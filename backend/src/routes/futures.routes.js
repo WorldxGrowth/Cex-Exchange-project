@@ -30,6 +30,7 @@ router.use(authenticate);
 
 // Balance
 router.get('/balance',           ctrl.getFuturesBalance);
+router.get('/settings',          ctrl.getUserSettings);
 
 // Orders
 router.post('/orders/place',     orderLimit, ctrl.placeOrder);

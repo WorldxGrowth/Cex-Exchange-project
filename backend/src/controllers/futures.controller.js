@@ -70,11 +70,10 @@ async function placeOrder(req, res) {
     leverage = 5, margin_type = 'isolated',
     take_profit, stop_loss,
     reduce_only = false,
-    price_rate,       // trailing stop callback rate
+    price_rate,
     time_in_force = 'GTC'
   } = req.body;
 
-  // Validate
   if (!symbol || !side || !quantity) {
     return error(res, 'symbol, side, quantity are required', 400);
   }
@@ -89,11 +88,9 @@ async function placeOrder(req, res) {
   try {
     await client.query('BEGIN');
 
-    // Get pair config
     const pair = await getFuturesPair(symbol);
     if (!pair) return error(res, 'Futures pair not found or disabled', 404);
 
-    // Get mark price
     const { rows: [feed] } = await client.query(
       `SELECT price_usdt FROM price_feeds
        WHERE coin_id = $1 ORDER BY updated_at DESC LIMIT 1`,
@@ -102,20 +99,15 @@ async function placeOrder(req, res) {
     const markPrice = parseFloat(feed?.price_usdt || price || 0);
     if (!markPrice) return error(res, 'Cannot determine mark price', 400);
 
-    // Use limit price or mark price for cost calculation
     const orderPrice = order_type === 'limit' ? parseFloat(price) : markPrice;
+    const margin = calcInitialMargin(parseFloat(quantity), parseFloat(orderPrice), parseInt(leverage), margin_type);
+    const cost   = calcOrderCost(parseFloat(quantity), parseFloat(orderPrice), parseInt(leverage));
 
-    // Calculate margin needed
-    const margin = calcInitialMargin(quantity, orderPrice, leverage, margin_type);
-    const cost   = calcOrderCost(quantity, orderPrice, leverage);
-
-    // USDT coin id
     const { rows: [usdtCoin] } = await client.query(
       `SELECT id FROM coins WHERE symbol='USDT' LIMIT 1`
     );
     if (!usdtCoin) throw new Error('USDT coin not found');
 
-    // Check futures balance
     const { rows: [bal] } = await client.query(
       `SELECT available, locked FROM balances
        WHERE user_id=$1 AND coin_id=$2 AND account_type='futures'
@@ -128,7 +120,6 @@ async function placeOrder(req, res) {
       return error(res, `Insufficient futures balance. Need $${cost.toFixed(4)} USDT`, 400);
     }
 
-    // Check min notional
     const notional = parseFloat(quantity) * orderPrice;
     const minNotional = parseFloat(pair.min_notional || 5);
     if (notional < minNotional) {
@@ -136,14 +127,12 @@ async function placeOrder(req, res) {
       return error(res, `Order too small. Min notional: $${minNotional}`, 400);
     }
 
-    // Check leverage
     const maxLev = parseInt(pair.max_leverage || 125);
     if (parseInt(leverage) > maxLev) {
       await client.query('ROLLBACK');
       return error(res, `Max leverage for ${symbol} is ${maxLev}x`, 400);
     }
 
-    // Lock margin in balance
     await client.query(
       `UPDATE balances SET
          available = available - $1,
@@ -153,10 +142,8 @@ async function placeOrder(req, res) {
       [margin, userId, usdtCoin.id]
     );
 
-    // Generate client order ID (VDX prefix for Binance compatibility)
     const clientOrderId = `VDX-F-${Date.now()}-${uuidv4().slice(0,8).toUpperCase()}`;
 
-    // Insert order to DB
     const { rows: [order] } = await client.query(
       `INSERT INTO futures_orders
          (user_id, pair_id, client_order_id, symbol, side, order_type,
@@ -183,22 +170,19 @@ async function placeOrder(req, res) {
 
     await client.query('COMMIT');
 
-    // Route order (async — don't wait for market orders on limit)
-    const fullOrder = { ...pair, ...order }; // order fields take priority over pair fields
+    const fullOrder = { ...pair, ...order };
     if (order_type.toLowerCase() === 'market') {
-      // Market: await fill
       try {
         const result = await routeFuturesOrder(fullOrder, pair);
         return success(res, {
-          order_id:  order.id,
+          order_id:        order.id,
           client_order_id: clientOrderId,
-          status:    result.status || 'filled',
+          status:          result.status || 'filled',
           symbol, side, quantity, leverage,
-          margin_used: margin,
-          message: `Futures ${side} order ${result.status || 'filled'}`
+          margin_used:     margin,
+          message:         `Futures ${side} order ${result.status || 'filled'}`
         });
       } catch (routeErr) {
-        // Refund margin if routing fails
         await db.query(
           `UPDATE balances SET available=available+$1, locked=GREATEST(locked-$1,0), updated_at=NOW()
            WHERE user_id=$2 AND coin_id=$3 AND account_type='futures'`,
@@ -211,17 +195,16 @@ async function placeOrder(req, res) {
         return error(res, `Order failed: ${routeErr.message}`, 500);
       }
     } else {
-      // Limit: async
       setImmediate(() => routeFuturesOrder(fullOrder, pair).catch(e =>
         console.error('[FuturesCtrl] limit order route error:', e.message)
       ));
       return success(res, {
-        order_id:  order.id,
+        order_id:        order.id,
         client_order_id: clientOrderId,
-        status:    'open',
+        status:          'open',
         symbol, side, quantity, price, leverage,
-        margin_used: margin,
-        message: 'Limit order placed'
+        margin_used:     margin,
+        message:         'Limit order placed'
       });
     }
 
@@ -238,7 +221,6 @@ async function placeOrder(req, res) {
 async function cancelOrder(req, res) {
   const userId  = req.user.id;
   const orderId = parseInt(req.params.order_id);
-
   try {
     const { rows: [order] } = await db.query(
       `SELECT fo.*, fp.is_custom
@@ -247,13 +229,10 @@ async function cancelOrder(req, res) {
        WHERE fo.id=$1 AND fo.user_id=$2`,
       [orderId, userId]
     );
-
-    if (!order)               return error(res, 'Order not found', 404);
+    if (!order)                  return error(res, 'Order not found', 404);
     if (order.status !== 'open') return error(res, 'Order is not open', 400);
-
     const pair = await getFuturesPair(order.symbol);
     await routeCancelOrder(order, pair);
-
     return success(res, { order_id: orderId, status: 'cancelled' });
   } catch (err) {
     return error(res, err.message);
@@ -265,20 +244,14 @@ async function getOpenOrders(req, res) {
   try {
     const userId = req.user.id;
     const { symbol } = req.query;
-
     let query = `
       SELECT fo.*, fp.tick_size, fp.step_size, fp.price_precision
       FROM futures_orders fo
       JOIN futures_pairs fp ON fp.id = fo.pair_id
       WHERE fo.user_id=$1 AND fo.status IN ('open','partially_filled')`;
     const params = [userId];
-
-    if (symbol) {
-      query += ` AND fo.symbol=$2`;
-      params.push(symbol.toUpperCase());
-    }
+    if (symbol) { query += ` AND fo.symbol=$2`; params.push(symbol.toUpperCase()); }
     query += ` ORDER BY fo.created_at DESC`;
-
     const { rows } = await db.query(query, params);
     return success(res, rows);
   } catch (err) {
@@ -291,17 +264,12 @@ async function getOrderHistory(req, res) {
   try {
     const userId = req.user.id;
     const { symbol, limit = 50, offset = 0 } = req.query;
-
-    let query = `
-      SELECT fo.* FROM futures_orders fo
-      WHERE fo.user_id=$1`;
+    let query = `SELECT fo.* FROM futures_orders fo WHERE fo.user_id=$1`;
     const params = [userId];
     let pIdx = 2;
-
     if (symbol) { query += ` AND fo.symbol=$${pIdx++}`; params.push(symbol.toUpperCase()); }
     query += ` ORDER BY fo.created_at DESC LIMIT $${pIdx++} OFFSET $${pIdx}`;
     params.push(parseInt(limit), parseInt(offset));
-
     const { rows } = await db.query(query, params);
     return success(res, rows);
   } catch (err) {
@@ -327,9 +295,11 @@ async function closePositionEndpoint(req, res) {
     const positionId = parseInt(req.params.position_id);
     const { close_qty } = req.body;
 
-    // Get current mark price
+    // Get position with pair info
     const { rows: [pos] } = await db.query(
-      `SELECT p.*, pf.price_usdt as mark_price
+      `SELECT p.*, fp.is_custom, fp.step_size, fp.taker_fee,
+              fp.maintenance_margin, fp.price_precision,
+              pf.price_usdt as mark_price
        FROM futures_positions p
        JOIN futures_pairs fp ON fp.id = p.pair_id
        LEFT JOIN price_feeds pf ON pf.coin_id = fp.base_coin_id
@@ -339,11 +309,74 @@ async function closePositionEndpoint(req, res) {
 
     if (!pos) return error(res, 'Position not found', 404);
 
-    const markPrice = parseFloat(pos.mark_price || pos.mark_price);
+    const markPrice = parseFloat(pos.mark_price || 0);
     if (!markPrice) return error(res, 'Cannot get mark price', 400);
 
+    const closeQty = parseFloat(close_qty || pos.quantity);
+
+    // ── Binance pairs: place reduce-only order on Binance ──
+    if (!pos.is_custom) {
+      try {
+        const { getFuturesBinanceAdapter } = require('../services/futures/binance/futuresBinanceAdapter');
+        const adapter  = await getFuturesBinanceAdapter();
+
+        const stepSize   = parseFloat(pos.step_size || 0.001);
+        const precision  = (stepSize.toString().split('.')[1] || '').length;
+        const roundedQty = parseFloat((Math.floor(closeQty / stepSize) * stepSize).toFixed(precision));
+
+        if (roundedQty <= 0) return error(res, 'Close quantity too small', 400);
+
+        const closeSide  = pos.side === 'long' ? 'SELL' : 'BUY';
+        const binanceRes = await adapter.placeOrder({
+          symbol:       pos.symbol,
+          side:         closeSide,
+          type:         'MARKET',
+          quantity:     roundedQty,
+          positionSide: 'BOTH',
+          reduceOnly:   true,
+        });
+
+        console.log(`[FuturesCtrl] Binance close: ${binanceRes.status} avgPrice=${binanceRes.avgPrice}`);
+
+        const closePrice = parseFloat(binanceRes.avgPrice || markPrice);
+
+        // Update DB position
+        const result = await closePosition(
+          positionId, userId, roundedQty, closePrice, false
+        );
+
+        // Cancel remaining TP/SL algo orders on Binance (non-blocking)
+        if (result.isFullClose) {
+          setImmediate(async () => {
+            try {
+              const { getFuturesBinanceAdapter } = require('../services/futures/binance/futuresBinanceAdapter');
+              const adp = await getFuturesBinanceAdapter();
+              await adp.delete('/fapi/v1/algoOpenOrders', { symbol: pos.symbol });
+              console.log(`[FuturesCtrl] Algo orders cancelled for ${pos.symbol}`);
+            } catch(e) {
+              console.warn('[FuturesCtrl] Cancel algo orders:', e.message);
+            }
+          });
+        }
+
+        return success(res, {
+          position_id:  positionId,
+          closed_qty:   result.closedQty,
+          realized_pnl: result.realizedPnl.toFixed(6),
+          fee:          result.fee.toFixed(6),
+          is_full_close: result.isFullClose,
+          close_price:  closePrice,
+        });
+
+      } catch (binanceErr) {
+        console.error('[FuturesCtrl] Binance close error:', binanceErr.message);
+        return error(res, `Close failed on Binance: ${binanceErr.message}`, 500);
+      }
+    }
+
+    // ── Internal pairs: close directly ──
     const result = await closePosition(
-      positionId, userId, close_qty || pos.quantity, markPrice, pos.is_custom
+      positionId, userId, closeQty, markPrice, true
     );
 
     return success(res, {
@@ -352,7 +385,9 @@ async function closePositionEndpoint(req, res) {
       realized_pnl: result.realizedPnl.toFixed(6),
       fee:          result.fee.toFixed(6),
       is_full_close: result.isFullClose,
+      close_price:  markPrice,
     });
+
   } catch (err) {
     return error(res, err.message);
   }
@@ -363,15 +398,12 @@ async function getTradeHistory(req, res) {
   try {
     const userId = req.user.id;
     const { symbol, limit = 50, offset = 0 } = req.query;
-
     let query = `SELECT * FROM futures_trades WHERE user_id=$1`;
     const params = [userId];
     let pIdx = 2;
-
     if (symbol) { query += ` AND symbol=$${pIdx++}`; params.push(symbol.toUpperCase()); }
     query += ` ORDER BY created_at DESC LIMIT $${pIdx++} OFFSET $${pIdx}`;
     params.push(parseInt(limit), parseInt(offset));
-
     const { rows } = await db.query(query, params);
     return success(res, rows);
   } catch (err) {
@@ -402,16 +434,12 @@ async function changeLeverage(req, res) {
   try {
     const { symbol, leverage } = req.body;
     const lev = parseInt(leverage);
-
     const pair = await getFuturesPair(symbol);
     if (!pair) return error(res, 'Pair not found', 404);
-
     const maxLev = parseInt(pair.max_leverage || 125);
     if (lev < 1 || lev > maxLev) {
       return error(res, `Leverage must be 1-${maxLev}`, 400);
     }
-
-    // For Binance pairs, also change on Binance
     if (!pair.is_custom) {
       try {
         const { getFuturesBinanceAdapter } = require('../services/futures/binance/futuresBinanceAdapter');
@@ -421,7 +449,14 @@ async function changeLeverage(req, res) {
         console.warn('[FuturesCtrl] Binance changeLeverage warning:', e.message);
       }
     }
-
+    // Save user preference
+    await db.query(
+      `INSERT INTO user_futures_settings (user_id, symbol, leverage)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (user_id, symbol)
+       DO UPDATE SET leverage=$3, updated_at=NOW()`,
+      [req.user.id, symbol.toUpperCase(), lev]
+    );
     return success(res, { symbol, leverage: lev, max_leverage: maxLev });
   } catch (err) {
     return error(res, err.message);
@@ -435,10 +470,8 @@ async function changeMarginType(req, res) {
     if (!['isolated','cross'].includes(margin_type)) {
       return error(res, 'margin_type must be isolated or cross', 400);
     }
-
     const pair = await getFuturesPair(symbol);
     if (!pair) return error(res, 'Pair not found', 404);
-
     if (!pair.is_custom) {
       try {
         const { getFuturesBinanceAdapter } = require('../services/futures/binance/futuresBinanceAdapter');
@@ -446,52 +479,65 @@ async function changeMarginType(req, res) {
         await adapter.changeMarginType(symbol.toUpperCase(),
           margin_type === 'isolated' ? 'ISOLATED' : 'CROSSED');
       } catch (e) {
-        // Ignore if already set
         console.warn('[FuturesCtrl] Binance changeMarginType:', e.message);
       }
     }
-
+    // Save user preference
+    await db.query(
+      `INSERT INTO user_futures_settings (user_id, symbol, margin_type)
+       VALUES ($1, $2, $3)
+       ON CONFLICT (user_id, symbol)
+       DO UPDATE SET margin_type=$3, updated_at=NOW()`,
+      [req.user.id, symbol.toUpperCase(), margin_type]
+    );
     return success(res, { symbol, margin_type });
   } catch (err) {
     return error(res, err.message);
   }
 }
 
-// ── Calculate Order Cost (for frontend preview) ───────────────
+// ── Get User Futures Settings ────────────────────────────────
+async function getUserSettings(req, res) {
+  try {
+    const { symbol } = req.query;
+    const { rows } = await db.query(
+      `SELECT * FROM user_futures_settings
+       WHERE user_id=$1 ${symbol ? 'AND symbol=$2' : ''}`,
+      symbol ? [req.user.id, symbol.toUpperCase()] : [req.user.id]
+    );
+    return success(res, rows);
+  } catch (err) {
+    return error(res, err.message);
+  }
+}
+
+// ── Calculate Order Cost ─────────────────────────────────────
 async function calculateOrderCost(req, res) {
   try {
     const { symbol, side, quantity, price, leverage = 5, order_type = 'market' } = req.query;
-
     const pair = await getFuturesPair(symbol);
     if (!pair) return error(res, 'Pair not found', 404);
-
     const { rows: [feed] } = await db.query(
       `SELECT price_usdt FROM price_feeds WHERE coin_id=$1 ORDER BY updated_at DESC LIMIT 1`,
       [pair.base_coin_id]
     );
-
     const markPrice  = parseFloat(feed?.price_usdt || 0);
     const orderPrice = order_type === 'limit' ? parseFloat(price) : markPrice;
     const qty        = parseFloat(quantity);
     const lev        = parseInt(leverage);
     const feeRate    = parseFloat(pair.taker_fee || 0.0004);
-
-    const margin      = calcInitialMargin(qty, orderPrice, lev);
-    const cost        = calcOrderCost(qty, orderPrice, lev, feeRate);
-    const maxQty      = calcMaxOrderQty(0, lev, markPrice, feeRate); // without balance check
-    const liqPrice    = calcLiquidationPrice(
-      side === 'buy' ? 'long' : 'short', orderPrice, lev
-    );
-
+    const margin     = calcInitialMargin(qty, orderPrice, lev);
+    const cost       = calcOrderCost(qty, orderPrice, lev, feeRate);
+    const liqPrice   = calcLiquidationPrice(side === 'buy' ? 'long' : 'short', orderPrice, lev);
     return success(res, {
-      mark_price:       markPrice,
-      order_price:      orderPrice,
-      notional:         (qty * orderPrice).toFixed(4),
-      margin_required:  margin.toFixed(4),
-      total_cost:       cost.toFixed(4),
-      estimated_fee:    (qty * orderPrice * feeRate).toFixed(6),
+      mark_price:        markPrice,
+      order_price:       orderPrice,
+      notional:          (qty * orderPrice).toFixed(4),
+      margin_required:   margin.toFixed(4),
+      total_cost:        cost.toFixed(4),
+      estimated_fee:     (qty * orderPrice * feeRate).toFixed(6),
       liquidation_price: liqPrice.toFixed(4),
-      leverage:         lev,
+      leverage:          lev,
     });
   } catch (err) {
     return error(res, err.message);
@@ -527,6 +573,7 @@ module.exports = {
   getFundingRateHistory,
   changeLeverage,
   changeMarginType,
+  getUserSettings,
   calculateOrderCost,
   getLiquidationLogs,
 };

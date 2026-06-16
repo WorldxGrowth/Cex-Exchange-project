@@ -188,4 +188,20 @@ setInterval(async () => {
 }, 2000);
 console.log('Futures PnL updater started (2s interval)');
 
+// Futures Reconcile (fallback for limit orders - 1 min)
+const futuresReconcile = require('./src/services/futures/binance/futuresReconcile');
+setInterval(() => {
+  futuresReconcile.run().catch(e => console.error('[FuturesReconcile]', e.message));
+}, 60 * 1000);
+console.log('Futures Reconciler started (1 min interval)');
+
+// TP/SL check for internal pairs (5s)
+setInterval(async () => {
+  try {
+    const { checkTpSl } = require('./src/services/futures/internal/futuresLiquidator');
+    await checkTpSl();
+  } catch(e) {}
+}, 5000);
+console.log('Futures TP/SL checker started (5s interval)');
+
 module.exports = { app, server };

@@ -161,3 +161,60 @@ function stop() {
 }
 
 module.exports = { start, stop, runLiquidationCheck, liquidatePosition };
+
+// TP/SL check for internal pairs
+async function checkTpSl() {
+  try {
+    const { rows: positions } = await db.query(
+      `SELECT p.*, pf.price_usdt as current_price
+       FROM futures_positions p
+       JOIN futures_pairs fp ON fp.id = p.pair_id
+       LEFT JOIN price_feeds pf ON pf.coin_id = fp.base_coin_id
+       WHERE p.status='open'
+         AND fp.is_custom=true
+         AND pf.price_usdt IS NOT NULL
+         AND (p.take_profit IS NOT NULL OR p.stop_loss IS NOT NULL)`
+    );
+
+    for (const pos of positions) {
+      const mp = parseFloat(pos.current_price);
+      const tp = pos.take_profit ? parseFloat(pos.take_profit) : null;
+      const sl = pos.stop_loss  ? parseFloat(pos.stop_loss)  : null;
+
+      let triggered = null;
+      if (pos.side === 'long') {
+        if (tp && mp >= tp) triggered = 'take_profit';
+        if (sl && mp <= sl) triggered = 'stop_loss';
+      } else {
+        if (tp && mp <= tp) triggered = 'take_profit';
+        if (sl && mp >= sl) triggered = 'stop_loss';
+      }
+
+      if (triggered) {
+        console.log(`[Liquidator] ${triggered.toUpperCase()} hit! pos=${pos.id} ${pos.side} @ ${mp}`);
+        const { closePosition } = require('./futuresEngine');
+        await closePosition(pos.id, pos.user_id, pos.quantity, mp, true);
+
+        // Notify user
+        try {
+          const io = require('../../../websocket/socket').getIO?.();
+          if (io) {
+            io.to(`user:${pos.user_id}`).emit('futures_update', {
+              type: triggered,
+              positionId: pos.id,
+              symbol: pos.symbol,
+              side: pos.side,
+              markPrice: mp,
+              message: `${triggered === 'take_profit' ? 'Take Profit' : 'Stop Loss'} triggered for ${pos.symbol}`
+            });
+          }
+        } catch(e) {}
+      }
+    }
+  } catch(err) {
+    console.error('[Liquidator] checkTpSl error:', err.message);
+  }
+}
+
+// Export updated module
+module.exports.checkTpSl = checkTpSl;

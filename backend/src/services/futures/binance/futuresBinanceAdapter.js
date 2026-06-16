@@ -119,19 +119,6 @@ class FuturesBinanceAdapter {
 
   // ── Orders ───────────────────────────────────────────────
 
-  /**
-   * Place new futures order
-   * @param {Object} params
-   * - symbol, side (BUY/SELL), type (MARKET/LIMIT/STOP_MARKET/TAKE_PROFIT_MARKET/TRAILING_STOP_MARKET)
-   * - quantity, price (for LIMIT)
-   * - positionSide (BOTH/LONG/SHORT) — default BOTH for one-way
-   * - stopPrice (for STOP_MARKET/TAKE_PROFIT_MARKET)
-   * - callbackRate (for TRAILING_STOP_MARKET, 0.1-5%)
-   * - reduceOnly (true/false)
-   * - newClientOrderId (our VDX- prefix)
-   * - timeInForce (GTC/IOC/FOK) — required for LIMIT
-   * - newOrderRespType: RESULT for instant fill data
-   */
   async placeOrder(params) {
     const payload = {
       symbol:          params.symbol,
@@ -165,9 +152,6 @@ class FuturesBinanceAdapter {
     return await this.post('/fapi/v1/order', payload);
   }
 
-  /**
-   * Cancel futures order
-   */
   async cancelOrder(symbol, orderId = null, clientOrderId = null) {
     const params = { symbol };
     if (orderId)       params.orderId = orderId;
@@ -175,16 +159,10 @@ class FuturesBinanceAdapter {
     return await this.delete('/fapi/v1/order', params);
   }
 
-  /**
-   * Cancel all open orders for symbol
-   */
   async cancelAllOrders(symbol) {
     return await this.delete('/fapi/v1/allOpenOrders', { symbol });
   }
 
-  /**
-   * Query order status
-   */
   async queryOrder(symbol, orderId = null, clientOrderId = null) {
     const params = { symbol };
     if (orderId)       params.orderId = orderId;
@@ -192,18 +170,11 @@ class FuturesBinanceAdapter {
     return await this.get('/fapi/v1/order', params, true);
   }
 
-  /**
-   * Get all open orders
-   */
   async getOpenOrders(symbol = null) {
     const params = symbol ? { symbol } : {};
     return await this.get('/fapi/v1/openOrders', params, true);
   }
 
-  /**
-   * Modify isolated position margin
-   * type: 1=Add, 2=Reduce
-   */
   async modifyPositionMargin(symbol, amount, type, positionSide = 'BOTH') {
     return await this.post('/fapi/v1/positionMargin', {
       symbol, amount, type, positionSide
@@ -245,7 +216,38 @@ class FuturesBinanceAdapter {
     const precision = (step.toString().split('.')[1] || '').length;
     return parseFloat((Math.floor(q / step) * step).toFixed(precision));
   }
-}
+
+  // ── Algo Orders (TP/SL) ─────────────────────────────────
+  // POST /fapi/v1/algoOrder - For STOP_MARKET, TAKE_PROFIT_MARKET, TRAILING_STOP_MARKET
+  async placeAlgoOrder(params) {
+    // algoType is always CONDITIONAL for TP/SL/Trailing
+    const payload = {
+      symbol:       params.symbol,
+      side:         params.side.toUpperCase(),
+      positionSide: params.positionSide || 'BOTH',
+      algoType:     'CONDITIONAL',
+      type:         params.type?.toUpperCase(),
+      quantity:     params.quantity,
+      workingType:  params.workingType || 'MARK_PRICE',
+    };
+    if (params.triggerPrice) payload.triggerPrice = params.triggerPrice;
+    if (params.stopPrice)    payload.triggerPrice = params.stopPrice; // alias
+    if (params.reduceOnly)   payload.reduceOnly   = String(params.reduceOnly);
+    if (params.clientAlgoId) payload.clientAlgoId = params.clientAlgoId;
+    if (params.callbackRate) payload.callbackRate  = params.callbackRate;
+    if (params.activationPrice) payload.activatePrice = params.activationPrice;
+    if (params.closePosition)   payload.closePosition = String(params.closePosition);
+    return await this.post('/fapi/v1/algoOrder', payload);
+  }
+
+  async cancelAlgoOrder(algoId) {
+    return await this.delete('/fapi/v1/algoOrder', { algoId });
+  }
+
+  async getOpenAlgoOrders(symbol) {
+    return await this.get('/fapi/v1/openAlgoOrders', { symbol }, true);
+  }
+} // <--- Class ends here now (Correct placement)
 
 // Singleton factory
 let _instance = null;
