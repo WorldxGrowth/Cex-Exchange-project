@@ -151,4 +151,54 @@ router.post('/security/change-pin/step2', audit('admin_pin_change','security'), 
 // ── Bot Management ───────────────────────────
 router.use('/bots', require('./bot.routes'));
 
+// Audit Log
+router.get('/audit-logs', async (req, res) => {
+  const db = require('../config/database');
+  const { success, error } = require('../utils/response');
+  try {
+    const page   = parseInt(req.query.page  || 1);
+    const limit  = parseInt(req.query.limit || 20);
+    const offset = (page - 1) * limit;
+    const conditions = ['1=1'];
+    const params = [];
+    if (req.query.action) {
+      params.push('%' + req.query.action + '%');
+      conditions.push('action ILIKE $' + params.length);
+    }
+    if (req.query.resource) {
+      params.push('%' + req.query.resource + '%');
+      conditions.push('resource ILIKE $' + params.length);
+    }
+    if (req.query.admin_email) {
+      params.push('%' + req.query.admin_email + '%');
+      conditions.push('admin_email ILIKE $' + params.length);
+    }
+    if (req.query.date_from) {
+      params.push(req.query.date_from);
+      conditions.push('created_at >= $' + params.length);
+    }
+    if (req.query.date_to) {
+      params.push(req.query.date_to);
+      conditions.push('created_at <= $' + params.length);
+    }
+    const where = conditions.join(' AND ');
+    const logsRes = await db.query(
+      'SELECT * FROM admin_audit_logs WHERE ' + where +
+      ' ORDER BY created_at DESC LIMIT $' + (params.length+1) +
+      ' OFFSET $' + (params.length+2),
+      [...params, limit, offset]
+    );
+    const countRes = await db.query(
+      'SELECT COUNT(*) FROM admin_audit_logs WHERE ' + where, params
+    );
+    return success(res, {
+      logs:  logsRes.rows,
+      total: parseInt(countRes.rows[0].count),
+      page, limit
+    });
+  } catch (err) {
+    return error(res, 'Failed', 500);
+  }
+});
+
 module.exports = router;

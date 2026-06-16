@@ -25,6 +25,7 @@ import Networks from './pages/finance/Networks';
 import Announcements from './pages/content/Announcements';
 import CmsPages from './pages/content/CmsPages';
 import AdminSecurity from './pages/security/AdminSecurity';
+import AuditLog from './pages/security/AuditLog';
 
 const isAuth = () => !!localStorage.getItem('admin_token');
 const PrivateRoute = ({ children }) =>
@@ -71,6 +72,7 @@ export default function App() {
             <Route path="bots"                           element={<Bots />} />
             <Route path="settings"                       element={<Settings />} />
             <Route path="security"                       element={<AdminSecurity />} />
+            <Route path="audit-log"                       element={<AuditLog />} />
           </Route>
         </Routes>
       </BrowserRouter>

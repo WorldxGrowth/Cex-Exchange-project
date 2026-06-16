@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Layout, Menu, Avatar, Dropdown, Space, Typography, Drawer, Button } from 'antd';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import {
-  DashboardOutlined, UserOutlined, SettingOutlined, RobotOutlined,
+  DashboardOutlined, UserOutlined, SettingOutlined, RobotOutlined, AuditOutlined,
   LogoutOutlined, DollarOutlined, SafetyOutlined,
   RadarChartOutlined, PictureOutlined, ArrowDownOutlined,
   ArrowUpOutlined, RocketOutlined, MenuOutlined, CloseOutlined,
@@ -73,6 +73,7 @@ export default function MainLayout() {
     { key: '/listings', icon: <RocketOutlined />,     label: 'Listings' },
     { key: '/scanner',  icon: <RadarChartOutlined />, label: 'Scanner' },
     { key: '/bots',     icon: <RobotOutlined />,      label: 'Market Bots' },
+    { key: '/audit-log', icon: <AuditOutlined />,      label: 'Audit Log' },
     { key: '/security', icon: <LockOutlined />,       label: 'Security' },
     { key: '/settings', icon: <SettingOutlined />,    label: 'Settings' },
   ];

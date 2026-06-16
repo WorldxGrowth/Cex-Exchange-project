@@ -23,6 +23,7 @@ api.interceptors.response.use(
 );
 
 export const adminAPI = {
+  getAuditLogs: (params) => api.get(`/admin/audit-logs?${params}`),
   // Auth
   login: (data) => api.post('/admin/login', data),
 
