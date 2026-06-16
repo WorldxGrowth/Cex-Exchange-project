@@ -5,6 +5,8 @@ import { useStore } from '../../store/useStore';
 import { subscribeToTicker } from '../../services/socket';
 import { Search } from 'lucide-react';
 
+const isMobile = () => window.innerWidth < 768;
+
 const SkeletonRow = () => (
   <div style={{ display: 'flex', alignItems: 'center', padding: '14px 16px',
                 borderBottom: '1px solid var(--color-border)', gap: 10 }}>
@@ -38,11 +40,22 @@ function useCountdown(targetDate: string | null) {
   return timeLeft;
 }
 
-function ScheduledRow({ pair, onClick }: { pair: any; onClick: () => void }) {
+function useIsDesktop() {
+  const [desktop, setDesktop] = useState(!isMobile());
+  useEffect(() => {
+    const h = () => setDesktop(!isMobile());
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
+  }, []);
+  return desktop;
+}
+
+function ScheduledRow({ pair, onClick, desktop }: { pair: any; onClick: () => void; desktop: boolean }) {
   const countdown = useCountdown(pair.listing_date);
   return (
     <div onClick={onClick}
-      style={{ display: 'flex', alignItems: 'center', padding: '13px 16px',
+      style={{ display: 'flex', alignItems: 'center',
+               padding: desktop ? '14px 24px' : '13px 16px',
                cursor: 'pointer', borderBottom: '1px solid var(--color-border)',
                background: 'var(--color-bg)', transition: 'background 0.15s' }}
       onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-surface)')}
@@ -50,9 +63,9 @@ function ScheduledRow({ pair, onClick }: { pair: any; onClick: () => void }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
         {pair.base_logo
           ? <img src={pair.base_logo} alt=""
-              style={{ width: 40, height: 40, borderRadius: '50%' }}
+              style={{ width: desktop ? 44 : 40, height: desktop ? 44 : 40, borderRadius: '50%' }}
               onError={(e) => { (e.target as any).style.display='none'; }} />
-          : <div style={{ width: 40, height: 40, borderRadius: '50%', flexShrink: 0,
+          : <div style={{ width: desktop ? 44 : 40, height: desktop ? 44 : 40, borderRadius: '50%', flexShrink: 0,
                           background: 'var(--color-surface2)', display: 'flex',
                           alignItems: 'center', justifyContent: 'center',
                           fontWeight: 800, color: 'var(--color-primary)', fontSize: 14 }}>
@@ -60,7 +73,7 @@ function ScheduledRow({ pair, onClick }: { pair: any; onClick: () => void }) {
             </div>
         }
         <div>
-          <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--color-text)' }}>
+          <div style={{ fontWeight: 700, fontSize: desktop ? 16 : 15, color: 'var(--color-text)' }}>
             <span style={{ fontWeight: 800 }}>{pair.base_symbol}</span>
             <span style={{ color: 'var(--color-muted)', fontWeight: 400, fontSize: 12 }}>/USDT</span>
           </div>
@@ -69,6 +82,8 @@ function ScheduledRow({ pair, onClick }: { pair: any; onClick: () => void }) {
           </div>
         </div>
       </div>
+      {desktop && <div style={{ width: 160 }} />}
+      {desktop && <div style={{ width: 120 }} />}
       <div style={{ background: 'var(--color-surface2)', borderRadius: 8,
                     padding: '6px 10px', fontSize: 12, fontWeight: 600,
                     color: 'var(--color-primary)', letterSpacing: 0.5,
@@ -88,6 +103,7 @@ export default function Markets() {
   const [search, setSearch]    = useState('');
   const [tab, setTab]          = useState<'spot'|'gainers'|'losers'|'new'>('spot');
   const [loading, setLoading]  = useState(cachedPairs.length === 0);
+  const desktop = useIsDesktop();
 
   useEffect(() => {
     const cacheAge = Date.now() - pairsLoadedAt;
@@ -113,20 +129,16 @@ export default function Markets() {
         if (!p.symbol.toLowerCase().includes(s) &&
             !p.base_symbol?.toLowerCase().includes(s)) return false;
       }
-      // New tab: sab dikhao (active + scheduled)
       if (tab === 'new') return true;
-      // Baaki tabs: sirf active pairs
       return p.is_active;
     })
     .sort((a, b) => {
       if (tab === 'gainers') return parseFloat(b.change_24h||0) - parseFloat(a.change_24h||0);
       if (tab === 'losers')  return parseFloat(a.change_24h||0) - parseFloat(b.change_24h||0);
       if (tab === 'new') {
-        // Scheduled pehle upar
         const aS = a.pre_listing_mode ? 1 : 0;
         const bS = b.pre_listing_mode ? 1 : 0;
         if (bS !== aS) return bS - aS;
-        // Phir listing_date descending (latest first)
         const aDate = new Date(a.listing_date || a.created_at || 0).getTime();
         const bDate = new Date(b.listing_date || b.created_at || 0).getTime();
         return bDate - aDate;
@@ -141,138 +153,184 @@ export default function Markets() {
     { key: 'new',     label: 'New'     },
   ] as const;
 
+  const fmt = (n: any, min=2, max=6) =>
+    parseFloat(String(n)||'0').toLocaleString(undefined, { minimumFractionDigits: min, maximumFractionDigits: max });
+
   return (
     <div style={{ background: 'var(--color-bg)', minHeight: '100vh' }}>
+      <div style={{ maxWidth: desktop ? 1280 : '100%', margin: '0 auto' }}>
 
-      {/* Search */}
-      <div style={{ padding: '12px 16px', background: 'var(--color-bg)',
-                    borderBottom: '1px solid var(--color-border)',
-                    position: 'sticky', top: 0, zIndex: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 10,
-                      background: 'var(--color-surface)', borderRadius: 24,
-                      padding: '10px 16px', border: '1px solid var(--color-border)' }}>
-          <Search size={15} color="var(--color-muted)" />
-          <input placeholder="Search coin..."
-            value={search} onChange={e => setSearch(e.target.value)}
-            style={{ flex: 1, background: 'none', border: 'none',
-                     color: 'var(--color-text)', fontSize: 14, outline: 'none' }} />
+        {/* Search */}
+        <div style={{ padding: desktop ? '16px 24px' : '12px 16px',
+                      background: 'var(--color-bg)',
+                      borderBottom: '1px solid var(--color-border)',
+                      position: 'sticky', top: 0, zIndex: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10,
+                        background: 'var(--color-surface)', borderRadius: 24,
+                        padding: desktop ? '12px 20px' : '10px 16px',
+                        border: '1px solid var(--color-border)',
+                        maxWidth: desktop ? 480 : '100%' }}>
+            <Search size={15} color="var(--color-muted)" />
+            <input placeholder="Search coin..."
+              value={search} onChange={e => setSearch(e.target.value)}
+              style={{ flex: 1, background: 'none', border: 'none',
+                       color: 'var(--color-text)', fontSize: 14, outline: 'none' }} />
+          </div>
         </div>
-      </div>
 
-      {/* Tabs */}
-      <div style={{ display: 'flex', background: 'var(--color-bg)',
-                    borderBottom: '1px solid var(--color-border)',
-                    padding: '0 8px', overflowX: 'auto', scrollbarWidth: 'none',
-                    position: 'sticky', top: 57, zIndex: 9 }}>
-        {tabs.map(t => (
-          <button key={t.key} onClick={() => setTab(t.key)} style={{
-            padding: '13px 16px', background: 'none', border: 'none',
-            cursor: 'pointer', whiteSpace: 'nowrap', fontSize: 15,
-            fontWeight: tab === t.key ? 700 : 500,
-            color: tab === t.key ? 'var(--color-text)' : 'var(--color-muted)',
-            borderBottom: tab === t.key
-              ? '2px solid var(--color-primary)' : '2px solid transparent',
-          }}>{t.label}</button>
-        ))}
-      </div>
+        {/* Tabs */}
+        <div style={{ display: 'flex', background: 'var(--color-bg)',
+                      borderBottom: '1px solid var(--color-border)',
+                      padding: desktop ? '0 24px' : '0 8px',
+                      overflowX: 'auto', scrollbarWidth: 'none',
+                      position: 'sticky', top: desktop ? 65 : 57, zIndex: 9 }}>
+          {tabs.map(t => (
+            <button key={t.key} onClick={() => setTab(t.key)} style={{
+              padding: desktop ? '14px 20px' : '13px 16px',
+              background: 'none', border: 'none',
+              cursor: 'pointer', whiteSpace: 'nowrap',
+              fontSize: desktop ? 15 : 15,
+              fontWeight: tab === t.key ? 700 : 500,
+              color: tab === t.key ? 'var(--color-text)' : 'var(--color-muted)',
+              borderBottom: tab === t.key
+                ? '2px solid var(--color-primary)' : '2px solid transparent',
+            }}>{t.label}</button>
+          ))}
+        </div>
 
-      {/* Column headers */}
-      <div style={{ display: 'flex', padding: '8px 16px', background: 'var(--color-bg)',
-                    borderBottom: '1px solid var(--color-border)' }}>
-        <span style={{ flex: 1, fontSize: 12, color: 'var(--color-muted)', fontWeight: 500 }}>
-          Market/Vol
-        </span>
-        <span style={{ fontSize: 12, color: 'var(--color-muted)', fontWeight: 500,
-                       width: tab === 'new' ? 'auto' : 110, textAlign: 'right' }}>
-          {tab === 'new' ? 'Listing / Countdown' : 'Price'}
-        </span>
-        {tab !== 'new' && (
-          <span style={{ width: 80, textAlign: 'right', fontSize: 12,
-                         color: 'var(--color-muted)', fontWeight: 500 }}>Change</span>
-        )}
-      </div>
+        {/* Column headers */}
+        <div style={{ display: 'flex', padding: desktop ? '10px 24px' : '8px 16px',
+                      background: 'var(--color-bg)',
+                      borderBottom: '1px solid var(--color-border)' }}>
+          <span style={{ flex: 1, fontSize: 12, color: 'var(--color-muted)', fontWeight: 600 }}>
+            Market/Vol
+          </span>
+          {desktop && tab !== 'new' && (
+            <span style={{ width: 120, textAlign: 'right', fontSize: 12,
+                           color: 'var(--color-muted)', fontWeight: 600 }}>24h High</span>
+          )}
+          {desktop && tab !== 'new' && (
+            <span style={{ width: 120, textAlign: 'right', fontSize: 12,
+                           color: 'var(--color-muted)', fontWeight: 600 }}>24h Low</span>
+          )}
+          <span style={{ fontSize: 12, color: 'var(--color-muted)', fontWeight: 600,
+                         width: tab === 'new' ? 'auto' : desktop ? 160 : 110, textAlign: 'right' }}>
+            {tab === 'new' ? 'Listing / Countdown' : 'Price'}
+          </span>
+          {tab !== 'new' && (
+            <span style={{ width: desktop ? 100 : 80, textAlign: 'right', fontSize: 12,
+                           color: 'var(--color-muted)', fontWeight: 600 }}>Change</span>
+          )}
+        </div>
 
-      {/* List */}
-      {loading ? <SkeletonRow /> : filtered.map(pair => {
-        // Scheduled token row
-        if (pair.pre_listing_mode || !pair.is_active) {
-          return (
-            <ScheduledRow key={pair.symbol} pair={pair}
-              onClick={() => navigate(`/listing/${pair.symbol}`)} />
-          );
+        {/* List */}
+        {loading
+          ? Array(6).fill(0).map((_, i) => <SkeletonRow key={i} />)
+          : filtered.map(pair => {
+            if (pair.pre_listing_mode || !pair.is_active) {
+              return (
+                <ScheduledRow key={pair.symbol} pair={pair} desktop={desktop}
+                  onClick={() => navigate(`/listing/${pair.symbol}`)} />
+              );
+            }
+
+            const live   = prices[pair.symbol];
+            const price  = live?.price || pair.price || '0';
+            const change = parseFloat(live?.change_24h || pair.change_24h || '0');
+            const isUp   = change >= 0;
+            const high   = pair.high_24h || pair.price || '0';
+            const low    = pair.low_24h  || pair.price || '0';
+
+            return (
+              <div key={pair.symbol}
+                onClick={() => navigate(fromFutures ? `/futures/${pair.symbol}` : `/trade/${pair.symbol}`)}
+                style={{ display: 'flex', alignItems: 'center',
+                         padding: desktop ? '14px 24px' : '13px 16px',
+                         cursor: 'pointer', borderBottom: '1px solid var(--color-border)',
+                         background: 'var(--color-bg)', transition: 'background 0.15s' }}
+                onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-surface)')}
+                onMouseLeave={e => (e.currentTarget.style.background = 'var(--color-bg)')}>
+
+                {/* Coin Info */}
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
+                  {pair.base_logo
+                    ? <img src={pair.base_logo} alt=""
+                        style={{ width: desktop ? 44 : 40, height: desktop ? 44 : 40, borderRadius: '50%' }}
+                        onError={(e) => { (e.target as any).style.display='none'; }} />
+                    : <div style={{ width: desktop ? 44 : 40, height: desktop ? 44 : 40,
+                                    borderRadius: '50%', flexShrink: 0,
+                                    background: 'var(--color-surface2)', display: 'flex',
+                                    alignItems: 'center', justifyContent: 'center',
+                                    fontWeight: 800, color: 'var(--color-primary)', fontSize: 14 }}>
+                        {pair.base_symbol?.charAt(0)}
+                      </div>
+                  }
+                  <div>
+                    <div style={{ fontWeight: 700, fontSize: desktop ? 16 : 15, color: 'var(--color-text)' }}>
+                      <span style={{ fontWeight: 800 }}>{pair.base_symbol}</span>
+                      <span style={{ color: 'var(--color-muted)', fontWeight: 400, fontSize: 12 }}>/USDT</span>
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--color-muted)', marginTop: 2 }}>
+                      Vol {(parseFloat(pair.volume_24h||0)/1e6) >= 1
+                        ? `${(parseFloat(pair.volume_24h||0)/1e6).toFixed(2)}M`
+                        : `${(parseFloat(pair.volume_24h||0)/1e3).toFixed(1)}K`}
+                    </div>
+                  </div>
+                </div>
+
+                {/* Desktop: 24h High */}
+                {desktop && (
+                  <div style={{ width: 120, textAlign: 'right' }}>
+                    <div style={{ fontSize: 14, color: 'var(--color-success)', fontWeight: 600 }}>
+                      {fmt(high, 2, 6)}
+                    </div>
+                  </div>
+                )}
+
+                {/* Desktop: 24h Low */}
+                {desktop && (
+                  <div style={{ width: 120, textAlign: 'right' }}>
+                    <div style={{ fontSize: 14, color: 'var(--color-danger)', fontWeight: 600 }}>
+                      {fmt(low, 2, 6)}
+                    </div>
+                  </div>
+                )}
+
+                {/* Price */}
+                <div style={{ width: desktop ? 160 : 110, textAlign: 'right' }}>
+                  <div style={{ fontWeight: 700, fontSize: desktop ? 16 : 15, color: 'var(--color-text)' }}>
+                    {fmt(price, 2, 6)}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--color-muted)', marginTop: 1 }}>
+                    ${fmt(price, 2, 2)}
+                  </div>
+                </div>
+
+                {/* Change */}
+                <div style={{ width: desktop ? 100 : 80, textAlign: 'right' }}>
+                  <div style={{ display: 'inline-flex', alignItems: 'center',
+                                justifyContent: 'center',
+                                padding: desktop ? '7px 12px' : '6px 8px',
+                                borderRadius: 8,
+                                background: isUp ? '#0ecb81' : '#f6465d',
+                                color: '#fff', fontSize: 12, fontWeight: 700,
+                                minWidth: desktop ? 80 : 68 }}>
+                    {isUp ? '+' : ''}{change.toFixed(2)}%
+                  </div>
+                </div>
+              </div>
+            );
+          })
         }
 
-        // Normal trading pair
-        const live   = prices[pair.symbol];
-        const price  = live?.price || pair.price || '0';
-        const change = parseFloat(live?.change_24h || pair.change_24h || '0');
-        const isUp   = change >= 0;
-
-        // New tab mein active pairs → show price+change
-        return (
-          <div key={pair.symbol}
-            onClick={() => navigate(fromFutures ? `/futures/${pair.symbol}` : `/trade/${pair.symbol}`)}
-            style={{ display: 'flex', alignItems: 'center', padding: '13px 16px',
-                     cursor: 'pointer', borderBottom: '1px solid var(--color-border)',
-                     background: 'var(--color-bg)', transition: 'background 0.15s' }}
-            onMouseEnter={e => (e.currentTarget.style.background = 'var(--color-surface)')}
-            onMouseLeave={e => (e.currentTarget.style.background = 'var(--color-bg)')}>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, flex: 1 }}>
-              {pair.base_logo
-                ? <img src={pair.base_logo} alt=""
-                    style={{ width: 40, height: 40, borderRadius: '50%' }}
-                    onError={(e) => { (e.target as any).style.display='none'; }} />
-                : <div style={{ width: 40, height: 40, borderRadius: '50%', flexShrink: 0,
-                                background: 'var(--color-surface2)', display: 'flex',
-                                alignItems: 'center', justifyContent: 'center',
-                                fontWeight: 800, color: 'var(--color-primary)', fontSize: 14 }}>
-                    {pair.base_symbol?.charAt(0)}
-                  </div>
-              }
-              <div>
-                <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--color-text)' }}>
-                  <span style={{ fontWeight: 800 }}>{pair.base_symbol}</span>
-                  <span style={{ color: 'var(--color-muted)', fontWeight: 400, fontSize: 12 }}>/USDT</span>
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--color-muted)', marginTop: 2 }}>
-                  Vol {(parseFloat(pair.volume_24h||0)/1e6) >= 1
-                    ? `${(parseFloat(pair.volume_24h||0)/1e6).toFixed(2)}M`
-                    : `${(parseFloat(pair.volume_24h||0)/1e3).toFixed(1)}K`}
-                </div>
-              </div>
-            </div>
-
-            <div style={{ width: 110, textAlign: 'right' }}>
-              <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--color-text)' }}>
-                {parseFloat(String(price)||'0').toLocaleString(undefined,
-                  { minimumFractionDigits: 2, maximumFractionDigits: 6 })}
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--color-muted)', marginTop: 1 }}>
-                ${parseFloat(String(price)||'0').toLocaleString(undefined,
-                  { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-              </div>
-            </div>
-
-            <div style={{ width: 80, textAlign: 'right' }}>
-              <div style={{ display: 'inline-flex', alignItems: 'center',
-                            justifyContent: 'center', padding: '6px 8px', borderRadius: 8,
-                            background: isUp ? '#0ecb81' : '#f6465d',
-                            color: '#fff', fontSize: 12, fontWeight: 700, minWidth: 68 }}>
-                {isUp ? '+' : ''}{change.toFixed(2)}%
-              </div>
-            </div>
+        {/* Empty */}
+        {!loading && filtered.length === 0 && (
+          <div style={{ textAlign: 'center', padding: '60px 20px',
+                        color: 'var(--color-muted)', fontSize: 14 }}>
+            {tab === 'new' ? 'No listings' : `No results for "${search}"`}
           </div>
-        );
-      })}
-
-      {/* Empty */}
-      {!loading && filtered.length === 0 && (
-        <div style={{ textAlign: 'center', padding: '60px 20px',
-                      color: 'var(--color-muted)', fontSize: 14 }}>
-          {tab === 'new' ? 'No listings' : `No results for "${search}"`}
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }
