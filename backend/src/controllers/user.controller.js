@@ -102,6 +102,22 @@ const changePassword = async (req, res) => {
           withdraw_locked_until=NOW() + INTERVAL '24 hours'
       WHERE id=$2
     `, [hash, req.user.id]);
+    // Email alerts (non-blocking)
+    db.query('SELECT email, full_name FROM users WHERE id=$1', [req.user.id])
+      .then(u => {
+        if (u.rows[0]) {
+          const emailService = require('../services/email/emailService');
+          emailService.sendSecurityAlertEmail(u.rows[0], {
+            action: 'Password Changed',
+            ip: req.ip || 'Unknown',
+            device: req.headers['user-agent'] || 'Unknown'
+          }).catch(() => {});
+          emailService.sendWithdrawLockedEmail(u.rows[0],
+            'Password was changed'
+          ).catch(() => {});
+        }
+      }).catch(() => {});
+
     return success(res, {}, 'Password changed. Withdrawals locked for 24 hours for security.');
   } catch (err) { return error(res, 'Failed', 500); }
 };

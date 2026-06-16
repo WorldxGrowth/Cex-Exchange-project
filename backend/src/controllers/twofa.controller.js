@@ -75,6 +75,22 @@ const verify2FA = async (req, res) => {
       VALUES ($1, '2fa_enabled', $2, 'success')
     `, [req.user.id, req.ip]);
 
+    // Email alerts (non-blocking)
+    db.query('SELECT email, full_name FROM users WHERE id=$1', [req.user.id])
+      .then(u => {
+        if (u.rows[0]) {
+          const emailService = require('../services/email/emailService');
+          emailService.sendSecurityAlertEmail(u.rows[0], {
+            action: '2FA Enabled',
+            ip: req.ip || 'Unknown',
+            device: req.headers['user-agent'] || 'Unknown'
+          }).catch(() => {});
+          emailService.sendWithdrawLockedEmail(u.rows[0],
+            '2FA was enabled on your account'
+          ).catch(() => {});
+        }
+      }).catch(() => {});
+
     return success(res, {
       backup_codes: backupCodes,
       message: '2FA enabled successfully!'
@@ -122,6 +138,22 @@ const disable2FA = async (req, res) => {
       INSERT INTO security_logs (user_id, action, ip_address, status)
       VALUES ($1, '2fa_disabled', $2, 'success')
     `, [req.user.id, req.ip]);
+
+    // Email alerts (non-blocking)
+    db.query('SELECT email, full_name FROM users WHERE id=$1', [req.user.id])
+      .then(u => {
+        if (u.rows[0]) {
+          const emailService = require('../services/email/emailService');
+          emailService.sendSecurityAlertEmail(u.rows[0], {
+            action: '2FA Disabled',
+            ip: req.ip || 'Unknown',
+            device: req.headers['user-agent'] || 'Unknown'
+          }).catch(() => {});
+          emailService.sendWithdrawLockedEmail(u.rows[0],
+            '2FA was disabled on your account'
+          ).catch(() => {});
+        }
+      }).catch(() => {});
 
     return success(res, {}, '2FA disabled successfully. Withdrawals locked for 24 hours for security.');
   } catch (err) {

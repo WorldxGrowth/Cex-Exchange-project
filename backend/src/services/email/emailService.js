@@ -411,10 +411,264 @@ const sendOTPEmail = async (user, otp, type = 'login') => {
   });
 };
 
+
+// ================================
+// 13. Trade Executed Email
+// ================================
+const sendTradeEmail = async (user, trade) => {
+  const isBuy    = trade.side === 'buy';
+  const color    = isBuy ? '#0ecb81' : '#f6465d';
+  const icon     = isBuy ? '📈' : '📉';
+  const action   = isBuy ? 'Bought' : 'Sold';
+
+  const html = baseTemplate(`
+    <h2 style="color:${color};margin:0 0 16px;">${icon} Trade ${action}!</h2>
+    <p style="color:#ccc;">Your trade has been executed successfully on VDExchange.</p>
+    <div style="background:#2b2f36;border-radius:8px;padding:20px;margin:20px 0;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        ${[
+          ['Pair',        `<strong style="color:#f0b90b;">${trade.symbol}</strong>`],
+          ['Side',        `<strong style="color:${color};">${action.toUpperCase()}</strong>`],
+          ['Quantity',    `<strong style="color:#fff;">${parseFloat(trade.qty||0).toFixed(6)} ${trade.base_symbol}</strong>`],
+          ['Price',       `${parseFloat(trade.price||0).toFixed(4)} USDT`],
+          ['Total Value', `<strong style="color:${color};">${parseFloat(trade.total||0).toFixed(2)} USDT</strong>`],
+          ['Fee',         `${parseFloat(trade.fee||0).toFixed(6)} ${trade.fee_symbol||'USDT'}`],
+          ['Order ID',    `<span style="font-size:11px;color:#848e9c;">${trade.order_id||'N/A'}</span>`],
+          ['Time',        new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})],
+        ].map(([k,v]) => `
+          <tr>
+            <td style="color:#848e9c;padding:6px 0;font-size:13px;">${k}</td>
+            <td style="color:#fff;padding:6px 0;font-size:13px;text-align:right;">${v}</td>
+          </tr>
+        `).join('')}
+      </table>
+    </div>
+    <div style="text-align:center;margin-top:20px;">
+      <a href="${process.env.FRONTEND_URL}/orders" style="background:#f0b90b;color:#000;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;">
+        View Orders →
+      </a>
+    </div>
+  `, 'Trade Executed');
+
+  return sendEmail({
+    to:      user.email,
+    subject: `${icon} ${action} ${parseFloat(trade.qty||0).toFixed(4)} ${trade.base_symbol} @ ${parseFloat(trade.price||0).toFixed(4)} USDT`,
+    html
+  });
+};
+
+// ================================
+// 14. Order Cancelled Email
+// ================================
+const sendOrderCancelEmail = async (user, order) => {
+  const html = baseTemplate(`
+    <h2 style="color:#f6465d;margin:0 0 16px;">❌ Order Cancelled</h2>
+    <p style="color:#ccc;">Your order has been cancelled and funds have been refunded.</p>
+    <div style="background:#2b2f36;border-radius:8px;padding:20px;margin:20px 0;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        ${[
+          ['Pair',     `<strong style="color:#f0b90b;">${order.symbol}</strong>`],
+          ['Side',     order.side?.toUpperCase()],
+          ['Quantity', `${parseFloat(order.quantity||0).toFixed(6)}`],
+          ['Price',    order.order_type === 'market' ? 'Market' : `${parseFloat(order.price||0).toFixed(4)} USDT`],
+          ['Order ID', `<span style="font-size:11px;color:#848e9c;">${order.order_id||'N/A'}</span>`],
+          ['Status',   '<span style="color:#f6465d;">Cancelled</span>'],
+          ['Time',     new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})],
+        ].map(([k,v]) => `
+          <tr>
+            <td style="color:#848e9c;padding:6px 0;font-size:13px;">${k}</td>
+            <td style="color:#fff;padding:6px 0;font-size:13px;text-align:right;">${v}</td>
+          </tr>
+        `).join('')}
+      </table>
+    </div>
+    <div style="padding:12px;background:#2b2f36;border-radius:8px;border-left:3px solid #0ecb81;margin-top:16px;">
+      <p style="margin:0;color:#848e9c;font-size:12px;">✅ Funds have been refunded to your spot wallet.</p>
+    </div>
+  `, 'Order Cancelled');
+
+  return sendEmail({
+    to:      user.email,
+    subject: `❌ Order Cancelled: ${order.side?.toUpperCase()} ${order.symbol}`,
+    html
+  });
+};
+
+// ================================
+// 15. Security Alert Email
+// ================================
+const sendSecurityAlertEmail = async (user, alertInfo) => {
+  const html = baseTemplate(`
+    <h2 style="color:#f6465d;margin:0 0 16px;">🔐 Security Alert</h2>
+    <p style="color:#ccc;">A security change was made to your VDExchange account.</p>
+    <div style="background:#2b2f36;border-radius:8px;padding:20px;margin:20px 0;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        ${[
+          ['Action',  `<strong style="color:#f0b90b;">${alertInfo.action||'Security Change'}</strong>`],
+          ['IP',      alertInfo.ip||'Unknown'],
+          ['Device',  alertInfo.device||'Unknown'],
+          ['Time',    new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})],
+        ].map(([k,v]) => `
+          <tr>
+            <td style="color:#848e9c;padding:6px 0;font-size:13px;">${k}</td>
+            <td style="color:#fff;padding:6px 0;font-size:13px;text-align:right;">${v}</td>
+          </tr>
+        `).join('')}
+      </table>
+    </div>
+    <div style="padding:12px;background:#2b2f36;border-radius:8px;border-left:3px solid #f6465d;margin-top:16px;">
+      <p style="margin:0;color:#f6465d;font-size:13px;font-weight:bold;">
+        ⚠️ Withdrawals are locked for 24 hours for your security.
+      </p>
+      <p style="margin:8px 0 0;color:#848e9c;font-size:12px;">
+        If you did not make this change, please contact support immediately.
+      </p>
+    </div>
+    <div style="text-align:center;margin-top:20px;">
+      <a href="${process.env.FRONTEND_URL}/profile/security" 
+         style="background:#f6465d;color:#fff;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;">
+        Secure My Account →
+      </a>
+    </div>
+  `, 'Security Alert');
+
+  return sendEmail({
+    to:      user.email,
+    subject: `🔐 Security Alert: ${alertInfo.action||'Account Change'} - VDExchange`,
+    html
+  });
+};
+
+// ================================
+// 16. Withdrawal Locked Email
+// ================================
+const sendWithdrawLockedEmail = async (user, reason) => {
+  const html = baseTemplate(`
+    <h2 style="color:#f0b90b;margin:0 0 16px;">🔒 Withdrawals Temporarily Locked</h2>
+    <p style="color:#ccc;">Your withdrawals have been temporarily locked for security.</p>
+    <div style="background:#2b2f36;border-radius:8px;padding:20px;margin:20px 0;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        ${[
+          ['Reason',       `<span style="color:#f0b90b;">${reason||'Security change detected'}</span>`],
+          ['Lock Duration','24 hours'],
+          ['Locked At',    new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})],
+          ['Unlocks At',   new Date(Date.now()+24*60*60*1000).toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})],
+        ].map(([k,v]) => `
+          <tr>
+            <td style="color:#848e9c;padding:6px 0;font-size:13px;">${k}</td>
+            <td style="color:#fff;padding:6px 0;font-size:13px;text-align:right;">${v}</td>
+          </tr>
+        `).join('')}
+      </table>
+    </div>
+    <div style="padding:12px;background:#2b2f36;border-radius:8px;border-left:3px solid #f0b90b;">
+      <p style="margin:0;color:#848e9c;font-size:12px;">
+        This is a standard security measure. Trading and deposits are not affected.
+        If you did not make any changes, please contact support.
+      </p>
+    </div>
+  `, 'Withdrawals Locked');
+
+  return sendEmail({
+    to:      user.email,
+    subject: '🔒 VDExchange: Withdrawals Locked for 24 Hours',
+    html
+  });
+};
+
+// ================================
+// 17. VIP Upgrade Email
+// ================================
+const sendVipUpgradeEmail = async (user, vipInfo) => {
+  const html = baseTemplate(`
+    <h2 style="color:#f0b90b;margin:0 0 16px;">👑 VIP Level Upgraded!</h2>
+    <p style="color:#ccc;">Congratulations! Your VIP level has been upgraded on VDExchange.</p>
+    <div style="text-align:center;margin:24px 0;">
+      <div style="display:inline-block;background:linear-gradient(135deg,#f0b90b,#d48806);border-radius:16px;padding:20px 40px;">
+        <div style="color:#000;font-size:14px;font-weight:600;">YOUR NEW LEVEL</div>
+        <div style="color:#000;font-size:40px;font-weight:800;">VIP ${vipInfo.new_level||0}</div>
+      </div>
+    </div>
+    <div style="background:#2b2f36;border-radius:8px;padding:20px;margin:20px 0;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        ${[
+          ['Previous Level', `VIP ${vipInfo.old_level||0}`],
+          ['New Level',      `<strong style="color:#f0b90b;">VIP ${vipInfo.new_level||0}</strong>`],
+          ['Maker Fee',      `${vipInfo.maker_fee||'N/A'}`],
+          ['Taker Fee',      `${vipInfo.taker_fee||'N/A'}`],
+          ['Upgraded At',    new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})],
+        ].map(([k,v]) => `
+          <tr>
+            <td style="color:#848e9c;padding:6px 0;font-size:13px;">${k}</td>
+            <td style="color:#fff;padding:6px 0;font-size:13px;text-align:right;">${v}</td>
+          </tr>
+        `).join('')}
+      </table>
+    </div>
+    <div style="text-align:center;margin-top:20px;">
+      <a href="${process.env.FRONTEND_URL}/trade" 
+         style="background:#f0b90b;color:#000;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;">
+        Start Trading →
+      </a>
+    </div>
+  `, 'VIP Upgrade');
+
+  return sendEmail({
+    to:      user.email,
+    subject: `👑 Congratulations! You are now VIP ${vipInfo.new_level} on VDExchange`,
+    html
+  });
+};
+
+// ================================
+// 18. Referral Bonus Email
+// ================================
+const sendReferralEmail = async (user, refInfo) => {
+  const html = baseTemplate(`
+    <h2 style="color:#0ecb81;margin:0 0 16px;">🎉 Referral Bonus!</h2>
+    <p style="color:#ccc;">Someone just joined VDExchange using your referral code!</p>
+    <div style="background:#2b2f36;border-radius:8px;padding:20px;margin:20px 0;">
+      <table width="100%" cellpadding="0" cellspacing="0">
+        ${[
+          ['New Member',    `<strong style="color:#f0b90b;">${refInfo.referee_email||'New User'}</strong>`],
+          ['Your Code',     user.referral_code||'N/A'],
+          ['Commission',    `<strong style="color:#0ecb81;">${refInfo.commission_rate||'40'}% of trading fees</strong>`],
+          ['Joined At',     new Date().toLocaleString('en-IN',{timeZone:'Asia/Kolkata'})],
+        ].map(([k,v]) => `
+          <tr>
+            <td style="color:#848e9c;padding:6px 0;font-size:13px;">${k}</td>
+            <td style="color:#fff;padding:6px 0;font-size:13px;text-align:right;">${v}</td>
+          </tr>
+        `).join('')}
+      </table>
+    </div>
+    <div style="padding:12px;background:#2b2f36;border-radius:8px;border-left:3px solid #0ecb81;">
+      <p style="margin:0;color:#848e9c;font-size:12px;">
+        You will earn commission on every trade your referral makes. Keep sharing!
+      </p>
+    </div>
+    <div style="text-align:center;margin-top:20px;">
+      <a href="${process.env.FRONTEND_URL}/referral" 
+         style="background:#0ecb81;color:#000;padding:12px 32px;border-radius:8px;text-decoration:none;font-weight:bold;display:inline-block;">
+        View Referrals →
+      </a>
+    </div>
+  `, 'Referral Bonus');
+
+  return sendEmail({
+    to:      user.email,
+    subject: '🎉 New Referral: Someone joined VDExchange using your code!',
+    html
+  });
+};
+
+
 module.exports = {
   sendEmail, sendWelcomeEmail, sendDepositEmail,
   sendWithdrawalEmail, sendWithdrawalRejectedEmail,
   sendKYCEmail, sendLoginAlertEmail, sendPasswordChangedEmail,
   sendForgotPasswordEmail, sendLargeWithdrawalAlert,
-  sendBulkEmail, sendTestEmail, sendOTPEmail
+  sendBulkEmail, sendTestEmail, sendOTPEmail,
+  sendTradeEmail, sendOrderCancelEmail, sendSecurityAlertEmail,
+  sendWithdrawLockedEmail, sendVipUpgradeEmail, sendReferralEmail
 };

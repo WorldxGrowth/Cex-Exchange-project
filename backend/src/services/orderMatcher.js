@@ -600,6 +600,54 @@ class OrderMatcher {
         }
       } catch (e) {}
 
+      // ── 12. Trade Email (non-blocking, min $10) ──────
+      try {
+        const emailService = require('../services/email/emailService');
+        const minUsdtRes = await db.query(
+          "SELECT value FROM system_settings WHERE key='trade_email_min_usdt'"
+        );
+        const minUsdt = parseFloat(minUsdtRes.rows[0]?.value || 10);
+        const totalUsdt = total.toNumber();
+
+        if (totalUsdt >= minUsdt) {
+          // Buyer email
+          db.query('SELECT email FROM users WHERE id=$1', [buyOrder.user_id])
+            .then(u => {
+              if (u.rows[0]) {
+                emailService.sendTradeEmail(u.rows[0], {
+                  side: 'buy', symbol: pair.symbol,
+                  base_symbol: pair.base_symbol,
+                  qty: qty.toNumber(),
+                  price: price.toNumber(),
+                  total: totalUsdt,
+                  fee: buyerFee.toNumber(),
+                  fee_symbol: pair.base_symbol,
+                  order_id: buyOrder.order_id,
+                }).catch(() => {});
+              }
+            }).catch(() => {});
+
+          // Seller email
+          db.query('SELECT email FROM users WHERE id=$1', [sellOrder.user_id])
+            .then(u => {
+              if (u.rows[0]) {
+                emailService.sendTradeEmail(u.rows[0], {
+                  side: 'sell', symbol: pair.symbol,
+                  base_symbol: pair.base_symbol,
+                  qty: qty.toNumber(),
+                  price: price.toNumber(),
+                  total: totalUsdt,
+                  fee: sellerFee.toNumber(),
+                  fee_symbol: pair.quote_symbol,
+                  order_id: sellOrder.order_id,
+                }).catch(() => {});
+              }
+            }).catch(() => {});
+        }
+      } catch (e) {
+        console.error('[Trade Email] Error (non-blocking):', e.message);
+      }
+
       return true;
 
     } catch (err) {

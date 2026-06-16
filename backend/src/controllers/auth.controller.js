@@ -401,6 +401,22 @@ const resetPassword = async (req, res) => {
 
     if (!result.rows[0]) return error(res, 'User not found');
 
+    // Email alerts (non-blocking)
+    db.query('SELECT email, full_name FROM users WHERE email=$1', [email.toLowerCase().trim()])
+      .then(u => {
+        if (u.rows[0]) {
+          const emailService = require('../services/email/emailService');
+          emailService.sendSecurityAlertEmail(u.rows[0], {
+            action: 'Password Reset',
+            ip: req.ip || 'Unknown',
+            device: req.headers['user-agent'] || 'Unknown'
+          }).catch(() => {});
+          emailService.sendWithdrawLockedEmail(u.rows[0],
+            'Password was reset'
+          ).catch(() => {});
+        }
+      }).catch(() => {});
+
     return success(res, {}, 'Password reset successful! Withdrawals locked for 24 hours for security. Please login.');
   } catch (err) {
     console.error('resetPassword:', err.message);

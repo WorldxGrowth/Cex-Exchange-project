@@ -189,6 +189,21 @@ const updateUserVip = async (req, res) => {
     await db.query(`INSERT INTO vip_history (user_id,from_level,to_level,reason)
       VALUES ($1,$2,$3,'admin_override')`,
       [id, oldUser.rows[0]?.vip_level || 0, vip_level]).catch(()=>{});
+
+    // VIP upgrade email (non-blocking)
+    db.query('SELECT email, full_name FROM users WHERE id=$1', [id])
+      .then(u => {
+        if (u.rows[0]) {
+          const emailService = require('../services/email/emailService');
+          emailService.sendVipUpgradeEmail(u.rows[0], {
+            old_level:  oldUser.rows[0]?.vip_level || 0,
+            new_level:  vip_level,
+            maker_fee:  'Updated',
+            taker_fee:  'Updated',
+          }).catch(() => {});
+        }
+      }).catch(() => {});
+
     return success(res, {}, 'VIP level updated');
   } catch (err) { return error(res, 'Failed', 500); }
 };

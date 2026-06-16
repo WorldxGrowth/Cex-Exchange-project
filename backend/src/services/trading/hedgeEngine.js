@@ -388,6 +388,39 @@ class HedgeEngine {
         });
       } catch (e) {}
 
+      // ── Trade Email (non-blocking, min $10) ───
+      try {
+        const emailService = require('../../services/email/emailService');
+        const minUsdtRes = await db.query(
+          "SELECT value FROM system_settings WHERE key='trade_email_min_usdt'"
+        );
+        const minUsdt   = parseFloat(minUsdtRes.rows[0]?.value || 10);
+        const tradeUsdt = o.side === 'buy'
+          ? deltaFilledQty * avgPrice
+          : deltaFilledQty * userPrice;
+
+        if (tradeUsdt >= minUsdt) {
+          db.query('SELECT email FROM users WHERE id=$1', [o.user_id])
+            .then(u => {
+              if (u.rows[0]) {
+                emailService.sendTradeEmail(u.rows[0], {
+                  side:        o.side,
+                  symbol:      o.base_symbol + '/' + o.quote_symbol,
+                  base_symbol: o.base_symbol,
+                  qty:         deltaFilledQty,
+                  price:       avgPrice,
+                  total:       tradeUsdt,
+                  fee:         feeAmount,
+                  fee_symbol:  o.side === 'buy' ? o.base_symbol : o.quote_symbol,
+                  order_id:    ourOrderId,
+                }).catch(() => {});
+              }
+            }).catch(() => {});
+        }
+      } catch (e) {
+        console.error('[Hedge Trade Email] Error (non-blocking):', e.message);
+      }
+
     } catch (err) {
       await client.query('ROLLBACK');
       console.error('[Hedge] processFill error:', err.message);
