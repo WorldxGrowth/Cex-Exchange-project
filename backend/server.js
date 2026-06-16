@@ -64,6 +64,7 @@ app.use('/api/v1/wallet',        require('./src/routes/wallet.routes'));
 app.use('/api/v1/transfer',      require('./src/routes/transfer.routes'));
 app.use('/api/v1/market',        require('./src/routes/market.routes'));
 app.use('/api/v1/webhook',       require('./src/routes/webhook.routes'));
+app.use('/api/v1/futures',       require('./src/routes/futures.routes'));
 
 // ── 404 Handler ────────────────────────────────────
 app.use((req, res) => {
@@ -79,8 +80,8 @@ app.use((err, req, res, next) => {
 // ── Start Server ───────────────────────────────────
 const PORT = process.env.PORT || 4000;
 server.listen(PORT, () => {
-  console.log(`🚀 VDExchange API running on port ${PORT}`);
-  console.log(`📊 Health: http://localhost:${PORT}/health`);
+  console.log(`VDExchange API running on port ${PORT}`);
+  console.log(`Health: http://localhost:${PORT}/health`);
 });
 
 // ── WebSocket ──────────────────────────────────────
@@ -95,11 +96,11 @@ startPriceUpdater();
 const depositDetector = require('./src/services/wallet/depositDetector');
 depositDetector.init().then(() => depositDetector.start()).catch(console.error);
 
-// ── Order Matching Engine (VDC internal) ───────────
+// ── Spot Order Matching Engine (VDC internal) ──────
 const orderMatcher = require('./src/services/orderMatcher');
 try {
   orderMatcher.start();
-  console.log('⚡ OrderMatcher loaded');
+  console.log('OrderMatcher loaded');
 } catch(e) {
   console.error('OrderMatcher FAILED:', e.message);
 }
@@ -111,23 +112,80 @@ marketMaker.init().then(() => marketMaker.start()).catch(console.error);
 // ── Sweep Service ──────────────────────────────────
 const sweepService = require('./src/services/wallet/sweepService');
 sweepService.start();
-console.log('🧹 SweepService loaded');
+console.log('SweepService loaded');
 
-// ── Reconcile Job (every 1 min) ────────────────────
-// Limit orders ka Binance fill check karta hai
-// UserDataStream nahi hai to yahi fallback hai
+// ── Spot Reconcile Job (every 1 min) ───────────────
 const reconcileService = require('./src/services/trading/reconcile');
 setInterval(() => {
   reconcileService.run().catch(console.error);
-}, 1 * 60 * 1000); // 1 min (was 5 min)
-console.log('🔄 ReconcileService loaded (1 min interval)');
+}, 1 * 60 * 1000);
+console.log('ReconcileService loaded (1 min interval)');
 
-// ── Binance User Data Stream ────────────────────────
-// Limit order instant fill ke liye
-// 410 error = API key mein READ permission nahi
-// → Automatically disable ho jaata hai, reconcile fallback use hota hai
+// ── Spot Binance User Data Stream ──────────────────
 const binanceUserStream = require('./src/services/trading/binanceUserStream');
 binanceUserStream.connect().catch(() => {});
-console.log('📡 Binance User Data Stream starting...');
+console.log('Spot Binance UserDataStream starting...');
+
+// ══════════════════════════════════════════════════
+// FUTURES SERVICES
+// ══════════════════════════════════════════════════
+
+// ── Futures Liquidation Engine ─────────────────────
+try {
+  const futuresLiquidator = require('./src/services/futures/internal/futuresLiquidator');
+  futuresLiquidator.start();
+  console.log('Futures Liquidator started (5s interval)');
+} catch(e) {
+  console.error('Futures Liquidator FAILED:', e.message);
+}
+
+// ── Futures Funding Rate Cron ──────────────────────
+try {
+  const futuresFundingCron = require('./src/services/futures/internal/futuresFundingCron');
+  futuresFundingCron.start();
+  console.log('Futures Funding Cron started (8hr interval)');
+} catch(e) {
+  console.error('Futures Funding Cron FAILED:', e.message);
+}
+
+// ── Futures Binance UserDataStream ─────────────────
+// ORDER_TRADE_UPDATE for instant limit order fills
+try {
+  const futuresUserStream = require('./src/services/futures/binance/futuresUserStream');
+  futuresUserStream.start().catch(e => {
+    console.warn('Futures UserStream start warning:', e.message);
+  });
+  console.log('Futures Binance UserDataStream starting...');
+} catch(e) {
+  console.error('Futures UserStream FAILED:', e.message);
+}
+
+// ── Futures PnL Live Update (via price feed) ───────
+// Updates unrealized_pnl for all open positions every 2 sec
+const { updatePositionsPnl } = require('./src/services/futures/shared/pnlCalculator');
+setInterval(async () => {
+  try {
+    const db = require('./src/config/database');
+    const { rows: pairs } = await db.query(
+      `SELECT DISTINCT fp.symbol, fp.base_coin_id
+       FROM futures_positions p
+       JOIN futures_pairs fp ON fp.id = p.pair_id
+       WHERE p.status = 'open'`
+    );
+    for (const pair of pairs) {
+      const { rows: [feed] } = await db.query(
+        `SELECT price_usdt FROM price_feeds
+         WHERE coin_id = $1 ORDER BY updated_at DESC LIMIT 1`,
+        [pair.base_coin_id]
+      );
+      if (feed?.price_usdt) {
+        await updatePositionsPnl(pair.symbol, feed.price_usdt);
+      }
+    }
+  } catch (e) {
+    // Silent — non-critical
+  }
+}, 2000);
+console.log('Futures PnL updater started (2s interval)');
 
 module.exports = { app, server };
