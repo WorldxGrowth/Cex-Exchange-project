@@ -271,16 +271,6 @@ class OrderMatcher {
         const rem   = new Decimal(o.remaining_qty || 0);
         const price = new Decimal(o.price || 0);
 
-        // Dust threshold: remaining <= 0.001 = filled treat karo
-        if (rem.lessThanOrEqualTo('0.001')) {
-          await client.query(
-            "UPDATE orders SET status='filled', remaining_qty=0, updated_at=NOW() WHERE id=$1",
-            [o.id]
-          );
-          console.log(`✅ IOC dust: ${o.order_id} remaining=${rem.toFixed()} treated as filled`);
-          continue;
-        }
-
         let refundCoinId, refundAmount;
         if (o.side === 'buy') {
           refundCoinId  = pair.quote_coin_id;
