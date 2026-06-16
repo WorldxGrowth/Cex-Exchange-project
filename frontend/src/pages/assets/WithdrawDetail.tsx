@@ -21,9 +21,20 @@ const statusBg: any = {
   rejected:   'rgba(246,70,93,0.1)',
 };
 
+function useIsDesktop() {
+  const [d, setD] = useState(window.innerWidth >= 768);
+  useEffect(() => {
+    const h = () => setD(window.innerWidth >= 768);
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
+  }, []);
+  return d;
+}
+
 export default function WithdrawDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
+  const desktop = useIsDesktop();
   const [record, setRecord] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [copied, setCopied] = useState('');
@@ -86,12 +97,17 @@ export default function WithdrawDetail() {
         : '--' },
   ];
 
+  const contentMaxWidth = desktop ? 580 : '100%';
+  const contentMargin   = desktop ? '32px auto' : '0';
+  const contentPadding  = desktop ? '0 0 40px' : '0 0 32px';
+
   return (
     <div style={{ background: 'var(--color-bg)', minHeight: '100vh' }}>
 
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 12,
-                    padding: '12px 16px', background: 'var(--color-surface)',
+                    padding: desktop ? '14px 24px' : '12px 16px',
+                    background: 'var(--color-surface)',
                     borderBottom: '1px solid var(--color-border)' }}>
         <button onClick={() => navigate(-1)} style={{ background: 'none', border: 'none',
                  cursor: 'pointer', color: 'var(--color-text)' }}>
@@ -102,81 +118,89 @@ export default function WithdrawDetail() {
         </span>
       </div>
 
-      {/* Status Card */}
-      <div style={{ margin: '16px', padding: '20px',
-                    background: statusBg[status] || 'var(--color-surface)',
-                    borderRadius: 16, textAlign: 'center',
-                    border: `1px solid ${statusColor[status] || 'var(--color-border)'}` }}>
-        <div style={{ fontSize: 36, marginBottom: 8 }}>
-          {['completed','approved'].includes(status) ? '✅' :
-           ['pending','processing'].includes(status) ? '⏳' : '❌'}
-        </div>
-        <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--color-text)',
-                      marginBottom: 4 }}>
-          -{parseFloat(record.amount || 0).toFixed(6)} {record.symbol}
-        </div>
-        <div style={{ display: 'inline-block', padding: '4px 16px', borderRadius: 20,
-                      background: statusColor[status] || 'var(--color-muted)',
-                      color: '#fff', fontSize: 13, fontWeight: 600 }}>
-          {status.charAt(0).toUpperCase() + status.slice(1)}
-        </div>
-      </div>
+      {/* Content wrapper — centered on desktop */}
+      <div style={{ maxWidth: contentMaxWidth, margin: contentMargin,
+                    padding: contentPadding }}>
 
-      {/* Details */}
-      <div style={{ margin: '0 16px 16px', background: 'var(--color-surface)',
-                    borderRadius: 16, overflow: 'hidden',
-                    border: '1px solid var(--color-border)' }}>
-        {rows.map((row, i) => (
-          <div key={i} style={{
-            padding: '13px 16px',
-            borderBottom: i < rows.length - 1
-              ? '1px solid var(--color-border)' : 'none',
-            display: 'flex', justifyContent: 'space-between',
-            alignItems: 'flex-start', gap: 12
-          }}>
-            <span style={{ fontSize: 13, color: 'var(--color-muted)',
-                           flexShrink: 0, paddingTop: 1 }}>
-              {row.label}
-            </span>
-            <div style={{ display: 'flex', alignItems: 'center',
-                          gap: 6, textAlign: 'right' }}>
-              <span style={{
-                fontSize: 13, fontWeight: row.highlight ? 700 : 500,
-                color: row.highlight ? 'var(--color-success)' : 'var(--color-text)',
-                wordBreak: 'break-all',
-                maxWidth: row.copyKey ? '180px' : 'auto'
-              }}>
-                {row.value === '--' ? '--' : row.value}
-              </span>
-              {row.copyKey && row.value !== '--' && (
-                <button onClick={() => copy(row.value, row.copyKey!)} style={{
-                  background: 'none', border: 'none', cursor: 'pointer',
-                  color: copied === row.copyKey
-                    ? 'var(--color-success)' : 'var(--color-muted)',
-                  flexShrink: 0, padding: 2
-                }}>
-                  <Copy size={14} />
-                </button>
-              )}
-              {row.isHash && record.txhash && record.txhash !== '--' && (
-                <a href={`https://bscscan.com/tx/${record.txhash}`}
-                   target="_blank" rel="noreferrer" style={{ color: 'var(--color-muted)' }}>
-                  <ExternalLink size={14} />
-                </a>
-              )}
-            </div>
+        {/* Status Card */}
+        <div style={{ margin: desktop ? '24px 0 16px' : '16px',
+                      padding: desktop ? '28px 32px' : '20px',
+                      background: statusBg[status] || 'var(--color-surface)',
+                      borderRadius: desktop ? 20 : 16, textAlign: 'center',
+                      border: `1px solid ${statusColor[status] || 'var(--color-border)'}` }}>
+          <div style={{ fontSize: desktop ? 48 : 36, marginBottom: 10 }}>
+            {['completed','approved'].includes(status) ? '✅' :
+             ['pending','processing'].includes(status) ? '⏳' : '❌'}
           </div>
-        ))}
-      </div>
+          <div style={{ fontSize: desktop ? 28 : 22, fontWeight: 700,
+                        color: 'var(--color-text)', marginBottom: 8 }}>
+            -{parseFloat(record.amount || 0).toFixed(6)} {record.symbol}
+          </div>
+          <div style={{ display: 'inline-block', padding: '6px 20px', borderRadius: 20,
+                        background: statusColor[status] || 'var(--color-muted)',
+                        color: '#fff', fontSize: 14, fontWeight: 600 }}>
+            {status.charAt(0).toUpperCase() + status.slice(1)}
+          </div>
+        </div>
 
-      {/* Back Button */}
-      <div style={{ padding: '0 16px 32px' }}>
-        <button onClick={() => navigate(-1)} style={{
-          width: '100%', padding: '14px', borderRadius: 12,
-          border: '1px solid var(--color-border)', background: 'transparent',
-          color: 'var(--color-text)', fontSize: 15, fontWeight: 600,
-          cursor: 'pointer'
-        }}>Back to History</button>
+        {/* Details */}
+        <div style={{ margin: desktop ? '0 0 16px' : '0 16px 16px',
+                      background: 'var(--color-surface)',
+                      borderRadius: desktop ? 20 : 16, overflow: 'hidden',
+                      border: '1px solid var(--color-border)' }}>
+          {rows.map((row, i) => (
+            <div key={i} style={{
+              padding: desktop ? '15px 20px' : '13px 16px',
+              borderBottom: i < rows.length - 1
+                ? '1px solid var(--color-border)' : 'none',
+              display: 'flex', justifyContent: 'space-between',
+              alignItems: 'flex-start', gap: 12
+            }}>
+              <span style={{ fontSize: 13, color: 'var(--color-muted)',
+                             flexShrink: 0, paddingTop: 1, minWidth: 110 }}>
+                {row.label}
+              </span>
+              <div style={{ display: 'flex', alignItems: 'center',
+                            gap: 6, textAlign: 'right' }}>
+                <span style={{
+                  fontSize: 13, fontWeight: row.highlight ? 700 : 500,
+                  color: row.highlight ? 'var(--color-success)' : 'var(--color-text)',
+                  wordBreak: 'break-all',
+                  maxWidth: row.copyKey ? (desktop ? '320px' : '180px') : 'auto'
+                }}>
+                  {row.value === '--' ? '--' : row.value}
+                </span>
+                {row.copyKey && row.value !== '--' && (
+                  <button onClick={() => copy(row.value, row.copyKey!)} style={{
+                    background: 'none', border: 'none', cursor: 'pointer',
+                    color: copied === row.copyKey
+                      ? 'var(--color-success)' : 'var(--color-muted)',
+                    flexShrink: 0, padding: 2
+                  }}>
+                    <Copy size={14} />
+                  </button>
+                )}
+                {row.isHash && record.txhash && record.txhash !== '--' && (
+                  <a href={`https://bscscan.com/tx/${record.txhash}`}
+                     target="_blank" rel="noreferrer"
+                     style={{ color: 'var(--color-muted)' }}>
+                    <ExternalLink size={14} />
+                  </a>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* Back Button */}
+        <div style={{ padding: desktop ? '0' : '0 16px' }}>
+          <button onClick={() => navigate(-1)} style={{
+            width: '100%', padding: '14px', borderRadius: 12,
+            border: '1px solid var(--color-border)', background: 'transparent',
+            color: 'var(--color-text)', fontSize: 15, fontWeight: 600,
+            cursor: 'pointer'
+          }}>Back to History</button>
+        </div>
       </div>
     </div>
   );
