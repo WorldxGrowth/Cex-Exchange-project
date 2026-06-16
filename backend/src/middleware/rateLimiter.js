@@ -3,10 +3,8 @@
  * express-rate-limit v8.x
  * trust proxy = true (already set in server.js)
  */
+const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 
-const { rateLimit } = require('express-rate-limit');
-
-// ── Helper: standard response format ──────────────
 const rateLimitHandler = (req, res) => {
   res.status(429).json({
     status: '0',
@@ -14,100 +12,78 @@ const rateLimitHandler = (req, res) => {
   });
 };
 
-// ── 1. Login — 5 attempts per 1 min ──────────────
+// ── 1. Login — 5/min ─────────────────────────────
 const loginLimiter = rateLimit({
-  windowMs: 60 * 1000,       // 1 minute
-  max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: 60 * 1000, max: 5,
+  standardHeaders: true, legacyHeaders: false,
   handler: rateLimitHandler,
-  keyGenerator: (req) => req.ip,
+  keyGenerator: (req) => ipKeyGenerator(req),
 });
 
-// ── 2. Register — 3 per 10 min ───────────────────
+// ── 2. Register — 3/10min ────────────────────────
 const registerLimiter = rateLimit({
-  windowMs: 10 * 60 * 1000,  // 10 minutes
-  max: 3,
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: 10 * 60 * 1000, max: 3,
+  standardHeaders: true, legacyHeaders: false,
   handler: rateLimitHandler,
-  keyGenerator: (req) => req.ip,
+  keyGenerator: (req) => ipKeyGenerator(req),
 });
 
-// ── 3. OTP Send — 3 per 1 min ────────────────────
+// ── 3. OTP Send — 3/min ──────────────────────────
 const otpSendLimiter = rateLimit({
-  windowMs: 60 * 1000,       // 1 minute
-  max: 3,
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: 60 * 1000, max: 3,
+  standardHeaders: true, legacyHeaders: false,
   handler: rateLimitHandler,
-  keyGenerator: (req) => req.ip,
+  keyGenerator: (req) => ipKeyGenerator(req),
 });
 
-// ── 4. Forgot Password — 3 per hour ──────────────
+// ── 4. Forgot Password — 3/hour ──────────────────
 const forgotPasswordLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,  // 1 hour
-  max: 3,
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: 60 * 60 * 1000, max: 3,
+  standardHeaders: true, legacyHeaders: false,
   handler: rateLimitHandler,
-  keyGenerator: (req) => req.ip,
+  keyGenerator: (req) => ipKeyGenerator(req),
 });
 
-// ── 5. Withdrawal — 5 per hour per user ──────────
+// ── 5. Withdrawal — 5/hour per user ──────────────
 const withdrawalLimiter = rateLimit({
-  windowMs: 60 * 60 * 1000,  // 1 hour
-  max: 5,
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: 60 * 60 * 1000, max: 5,
+  standardHeaders: true, legacyHeaders: false,
   handler: rateLimitHandler,
-  // IP + userId dono se limit (agar token available ho)
   keyGenerator: (req) => {
     const userId = req.user?.id || req.user?.userId;
-    return userId ? `user_${userId}` : req.ip;
+    return userId ? `user_${userId}` : ipKeyGenerator(req);
   },
 });
 
-// ── 6. Order Place — 60 per min per user ─────────
+// ── 6. Order Place — 60/min per user ─────────────
 const orderPlaceLimiter = rateLimit({
-  windowMs: 60 * 1000,       // 1 minute
-  max: 60,
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: 60 * 1000, max: 60,
+  standardHeaders: true, legacyHeaders: false,
   handler: rateLimitHandler,
   keyGenerator: (req) => {
     const userId = req.user?.id || req.user?.userId;
-    return userId ? `user_${userId}` : req.ip;
+    return userId ? `user_${userId}` : ipKeyGenerator(req);
   },
 });
 
-// ── 7. Admin Login steps — 10 per 5 min per IP ───
+// ── 7. Admin Login — 10/5min ─────────────────────
 const adminLoginLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000,   // 5 minutes
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: 5 * 60 * 1000, max: 10,
+  standardHeaders: true, legacyHeaders: false,
   handler: rateLimitHandler,
-  keyGenerator: (req) => req.ip,
+  keyGenerator: (req) => ipKeyGenerator(req),
 });
 
-// ── 8. General API — 300 per min (global safety) ─
+// ── 8. General — 300/min ─────────────────────────
 const generalLimiter = rateLimit({
-  windowMs: 60 * 1000,       // 1 minute
-  max: 300,
-  standardHeaders: true,
-  legacyHeaders: false,
+  windowMs: 60 * 1000, max: 300,
+  standardHeaders: true, legacyHeaders: false,
   handler: rateLimitHandler,
-  keyGenerator: (req) => req.ip,
+  keyGenerator: (req) => ipKeyGenerator(req),
 });
 
 module.exports = {
-  loginLimiter,
-  registerLimiter,
-  otpSendLimiter,
-  forgotPasswordLimiter,
-  withdrawalLimiter,
-  orderPlaceLimiter,
-  adminLoginLimiter,
-  generalLimiter,
+  loginLimiter, registerLimiter, otpSendLimiter,
+  forgotPasswordLimiter, withdrawalLimiter,
+  orderPlaceLimiter, adminLoginLimiter, generalLimiter,
 };
