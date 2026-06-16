@@ -9,9 +9,20 @@ import HomeBalance      from '../../components/home/HomeBalance';
 import HomeQuickActions from '../../components/home/HomeQuickActions';
 import HomeMarkets      from '../../components/home/HomeMarkets';
 
+function useIsDesktop() {
+  const [desktop, setDesktop] = useState(window.innerWidth >= 768);
+  useEffect(() => {
+    const h = () => setDesktop(window.innerWidth >= 768);
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
+  }, []);
+  return desktop;
+}
+
 export default function Home() {
   const navigate = useNavigate();
   const { prices, pairs: cachedPairs, setPairs, pairsLoadedAt } = useStore();
+  const desktop = useIsDesktop();
 
   const [totalBalance, setTotalBalance]       = useState('0.00');
   const [hideBalance, setHideBalance]         = useState(false);
@@ -75,8 +86,43 @@ export default function Home() {
       / pairs.filter(p => p.is_active).length
     : 0;
 
+  const onboardingBanner = !allDone && (
+    <div onClick={() => nextStep && navigate(nextStep.action)}
+      style={{ margin: desktop ? '0 0 16px' : '16px 16px 12px',
+               padding: '14px 16px', borderRadius: 14, cursor: 'pointer',
+               background: 'linear-gradient(135deg, #1a1a2e, #16213e)',
+               border: '1px solid rgba(240,185,11,0.3)' }}>
+      <div style={{ display: 'flex', alignItems: 'center',
+                    justifyContent: 'space-between', marginBottom: 10 }}>
+        <div>
+          <div style={{ fontWeight: 700, fontSize: 14, color: '#f0b90b', marginBottom: 6 }}>
+            Complete Account Setup
+          </div>
+          <div style={{ display: 'flex', gap: 16 }}>
+            {steps.map(({ done, label, icon: Icon }) => (
+              <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                {done ? <CheckCircle size={13} color="#0ecb81" />
+                       : <Icon size={13} color="#848e9c" />}
+                <span style={{ fontSize: 12,
+                               color: done ? '#0ecb81' : '#848e9c',
+                               textDecoration: done ? 'line-through' : 'none' }}>
+                  {label}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+        <ArrowRight size={18} color="#f0b90b" />
+      </div>
+      <div style={{ height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.1)' }}>
+        <div style={{ height: '100%', borderRadius: 2, background: '#f0b90b',
+                      width: `${(doneCount / steps.length) * 100}%` }} />
+      </div>
+    </div>
+  );
+
   return (
-    <div style={{ background: 'var(--color-bg)', paddingBottom: 20 }}>
+    <div style={{ background: 'var(--color-bg)', minHeight: '100vh', paddingBottom: 20 }}>
 
       {/* Popup */}
       {showPopup && popup && (
@@ -116,56 +162,64 @@ export default function Home() {
         </div>
       )}
 
-      {/* Balance */}
-      <HomeBalance
-        totalBalance={totalBalance}
-        hideBalance={hideBalance}
-        portfolioChange={portfolioChange}
-        onToggleHide={() => setHideBalance(!hideBalance)}
-      />
-
-      {/* Quick Actions */}
-      <HomeQuickActions />
-
-      {/* Onboarding Banner */}
-      {!allDone && (
-        <div onClick={() => nextStep && navigate(nextStep.action)}
-          style={{ margin: '16px 16px 12px', padding: '14px 16px', borderRadius: 14,
-                   cursor: 'pointer',
-                   background: 'linear-gradient(135deg, #1a1a2e, #16213e)',
-                   border: '1px solid rgba(240,185,11,0.3)' }}>
-          <div style={{ display: 'flex', alignItems: 'center',
-                        justifyContent: 'space-between', marginBottom: 10 }}>
-            <div>
-              <div style={{ fontWeight: 700, fontSize: 14,
-                            color: '#f0b90b', marginBottom: 6 }}>
-                Complete Account Setup
-              </div>
-              <div style={{ display: 'flex', gap: 16 }}>
-                {steps.map(({ done, label, icon: Icon }) => (
-                  <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-                    {done ? <CheckCircle size={13} color="#0ecb81" />
-                           : <Icon size={13} color="#848e9c" />}
-                    <span style={{ fontSize: 12,
-                                   color: done ? '#0ecb81' : '#848e9c',
-                                   textDecoration: done ? 'line-through' : 'none' }}>
-                      {label}
-                    </span>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <ArrowRight size={18} color="#f0b90b" />
+      {/* ── MOBILE LAYOUT ── */}
+      {!desktop && (
+        <>
+          <div style={{ padding: '24px 20px 20px', background: 'var(--color-bg)' }}>
+            <HomeBalance
+              totalBalance={totalBalance}
+              hideBalance={hideBalance}
+              portfolioChange={portfolioChange}
+              onToggleHide={() => setHideBalance(!hideBalance)}
+            />
           </div>
-          <div style={{ height: 3, borderRadius: 2, background: 'rgba(255,255,255,0.1)' }}>
-            <div style={{ height: '100%', borderRadius: 2, background: '#f0b90b',
-                          width: `${(doneCount / steps.length) * 100}%` }} />
+          <HomeQuickActions />
+          {onboardingBanner}
+          <HomeMarkets pairs={pairs} prices={prices} />
+        </>
+      )}
+
+      {/* ── DESKTOP LAYOUT ── */}
+      {desktop && (
+        <div style={{ maxWidth: 1280, margin: '0 auto',
+                      display: 'flex', gap: 24, padding: '24px 24px 0', alignItems: 'flex-start' }}>
+
+          {/* LEFT: Balance + Actions + Onboarding */}
+          <div style={{ width: 380, flexShrink: 0 }}>
+            {/* Balance Card */}
+            <div style={{ background: 'var(--color-surface)',
+                          border: '1px solid var(--color-border)',
+                          borderRadius: 20, padding: '24px', marginBottom: 16 }}>
+              <HomeBalance
+                totalBalance={totalBalance}
+                hideBalance={hideBalance}
+                portfolioChange={portfolioChange}
+                onToggleHide={() => setHideBalance(!hideBalance)}
+              />
+            </div>
+
+            {/* Quick Actions Card */}
+            <div style={{ background: 'var(--color-surface)',
+                          border: '1px solid var(--color-border)',
+                          borderRadius: 20, padding: '20px', marginBottom: 16 }}>
+              <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 16,
+                            color: 'var(--color-text)' }}>Quick Actions</div>
+              <HomeQuickActions />
+            </div>
+
+            {/* Onboarding */}
+            {onboardingBanner}
+          </div>
+
+          {/* RIGHT: Markets */}
+          <div style={{ flex: 1, minWidth: 0,
+                        background: 'var(--color-surface)',
+                        border: '1px solid var(--color-border)',
+                        borderRadius: 20, overflow: 'hidden' }}>
+            <HomeMarkets pairs={pairs} prices={prices} desktop={true} />
           </div>
         </div>
       )}
-
-      {/* Markets */}
-      <HomeMarkets pairs={pairs} prices={prices} />
     </div>
   );
 }

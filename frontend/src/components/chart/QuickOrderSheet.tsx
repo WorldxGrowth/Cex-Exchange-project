@@ -68,11 +68,20 @@ export default function QuickOrderSheet({ sym, baseSym, currentPrice, onClose, o
         position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 99
       }} />
 
-      {/* Sheet */}
+      {/* Sheet — mobile: bottom sheet, desktop: centered modal */}
       <div style={{
-        position: 'fixed', bottom: 0, left: 0, right: 0, zIndex: 100,
-        background: 'var(--color-surface)', borderRadius: '16px 16px 0 0',
-        padding: '16px', maxHeight: '70vh', overflow: 'auto'
+        position: 'fixed',
+        bottom: window.innerWidth >= 1024 ? 'auto' : 0,
+        top: window.innerWidth >= 1024 ? '50%' : 'auto',
+        left: window.innerWidth >= 1024 ? '50%' : 0,
+        right: window.innerWidth >= 1024 ? 'auto' : 0,
+        transform: window.innerWidth >= 1024 ? 'translate(-50%, -50%)' : 'none',
+        width: window.innerWidth >= 1024 ? 420 : 'auto',
+        zIndex: 100,
+        background: 'var(--color-surface)',
+        borderRadius: window.innerWidth >= 1024 ? 16 : '16px 16px 0 0',
+        padding: '16px', maxHeight: '80vh', overflow: 'auto',
+        boxShadow: '0 24px 64px rgba(0,0,0,0.5)'
       }}>
         {/* Handle */}
         <div style={{ width: 40, height: 4, borderRadius: 2,

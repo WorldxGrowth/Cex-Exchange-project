@@ -36,7 +36,7 @@ export default function OrderForm({
   };
 
   return (
-    <div style={{ flex: 1, maxHeight: '56vh', overflow: 'auto', padding: '8px 10px' }}>
+    <div style={{ flex: 1, overflow: 'auto', padding: '8px 10px 20px' }}>
 
       {/* Buy / Sell */}
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr',

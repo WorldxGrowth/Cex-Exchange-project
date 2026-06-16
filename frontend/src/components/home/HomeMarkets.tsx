@@ -75,7 +75,7 @@ const tabs = [
   { key: 'new',     label: 'New'     },
 ] as const;
 
-export default function HomeMarkets({ pairs, prices }: Props) {
+export default function HomeMarkets({ pairs, prices, desktop = false }: Props & { desktop?: boolean }) {
   const navigate  = useNavigate();
   const [activeTab, setActiveTab] = useState<TabType>('hot');
 

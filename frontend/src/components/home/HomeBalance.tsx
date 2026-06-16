@@ -30,7 +30,7 @@ export default function HomeBalance({ totalBalance, hideBalance, portfolioChange
   const changeUp = portfolioChange >= 0;
 
   return (
-    <div style={{ background: 'var(--color-bg)', padding: '24px 20px 20px' }}>
+    <div>
 
       {/* Balance + sparkline */}
       <div style={{ display: 'flex', alignItems: 'flex-start',
@@ -70,7 +70,7 @@ export default function HomeBalance({ totalBalance, hideBalance, portfolioChange
 
       {/* Deposit button */}
       <button onClick={() => navigate('/deposit')} style={{
-        width: '100%', padding: '16px', borderRadius: 14, border: 'none',
+        width: '100%', padding: '14px', borderRadius: 14, border: 'none',
         background: 'var(--color-primary)', color: '#000',
         fontSize: 16, fontWeight: 700, cursor: 'pointer', marginTop: 20
       }}>Deposit</button>
