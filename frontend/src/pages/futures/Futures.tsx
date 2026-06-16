@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useNavigate } from 'react-router-dom';
 import { useStore } from '../../store/useStore';
 import { marketAPI } from '../../services/api';
 import { subscribeToOrderBook } from '../../services/socket';
 import { subscribeBinanceOrderBook, unsubscribeBinanceOrderBook } from '../../services/binanceWS';
 import { subscribeToTicker, getSocket } from '../../services/socket';
+import { ChevronDown, CandlestickChart } from 'lucide-react';
 
 import FuturesHeader    from '../../components/futures/FuturesHeader';
 import FuturesOrderBook from '../../components/futures/FuturesOrderBook';
@@ -12,31 +13,43 @@ import FuturesPositions from '../../components/futures/FuturesPositions';
 import LeverageSheet    from '../../components/futures/sheets/LeverageSheet';
 import MarginModeSheet  from '../../components/futures/sheets/MarginModeSheet';
 import TpSlSheet        from '../../components/futures/sheets/TpSlSheet';
+import CandleChart      from '../../components/chart/CandleChart';
 
 const ORDER_TYPES = ['Market', 'Limit', 'Trigger', 'Trailing stop'] as const;
 type OrderType = typeof ORDER_TYPES[number];
 
+function useIsDesktop() {
+  const [d, setD] = useState(window.innerWidth >= 1024);
+  useEffect(() => {
+    const h = () => setD(window.innerWidth >= 1024);
+    window.addEventListener('resize', h);
+    return () => window.removeEventListener('resize', h);
+  }, []);
+  return d;
+}
+
 export default function Futures() {
   const { symbol = 'BTCUSDT' } = useParams();
+  const navigate = useNavigate();
   const { prices } = useStore();
+  const desktop = useIsDesktop();
 
-  const [ticker, setTicker]           = useState<any>(null);
-  const [orderBook, setOrderBook]     = useState<any>({ bids: [], asks: [] });
-  const [price, setPrice]             = useState('');
-  const [amount, setAmount]           = useState('');
-  const [amountPct, setAmountPct]     = useState(0);
-  const [leverage, setLeverage]       = useState(5);
-  const [marginMode, setMarginMode]   = useState<'cross'|'isolated'>('isolated');
-  const [posMode, setPosMode]         = useState<'combined'|'separated'>('combined');
-  const [orderType, setOrderType]     = useState<OrderType>('Market');
-  const [openClose, setOpenClose]     = useState<'open'|'close'>('open');
-  const [tpValue, setTpValue]         = useState('');
-  const [slValue, setSlValue]         = useState('');
-  const [tpSlEnabled, setTpSlEnabled] = useState(false);
+  const [ticker, setTicker]             = useState<any>(null);
+  const [orderBook, setOrderBook]       = useState<any>({ bids: [], asks: [] });
+  const [price, setPrice]               = useState('');
+  const [amount, setAmount]             = useState('');
+  const [amountPct, setAmountPct]       = useState(0);
+  const [leverage, setLeverage]         = useState(5);
+  const [marginMode, setMarginMode]     = useState<'cross'|'isolated'>('isolated');
+  const [posMode, setPosMode]           = useState<'combined'|'separated'>('combined');
+  const [orderType, setOrderType]       = useState<OrderType>('Market');
+  const [openClose, setOpenClose]       = useState<'open'|'close'>('open');
+  const [tpValue, setTpValue]           = useState('');
+  const [slValue, setSlValue]           = useState('');
+  const [tpSlEnabled, setTpSlEnabled]   = useState(false);
   const [callbackRate, setCallbackRate] = useState('1');
   const [triggerPrice, setTriggerPrice] = useState('');
-  const [countdown, setCountdown]     = useState('');
-
+  const [countdown, setCountdown]       = useState('');
   const [showLeverage, setShowLeverage]     = useState(false);
   const [showMargin, setShowMargin]         = useState(false);
   const [showTpSl, setShowTpSl]             = useState(false);
@@ -46,8 +59,19 @@ export default function Futures() {
   const liveData     = prices[sym];
   const currentPrice = parseFloat(liveData?.price || ticker?.price || '0');
   const change24h    = parseFloat(liveData?.change_24h || ticker?.change_24h || '0');
+  const high24h      = parseFloat(liveData?.high_24h || ticker?.high_24h || '0');
+  const low24h       = parseFloat(liveData?.low_24h || ticker?.low_24h || '0');
+  const vol24h       = parseFloat(liveData?.volume_24h || ticker?.volume_24h || '0');
   const isUp         = change24h >= 0;
   const baseSym      = sym.replace('USDT', '');
+  const fundingRate  = -0.005822;
+  const marginLabel  = `${marginMode.charAt(0).toUpperCase() + marginMode.slice(1)} (${posMode.charAt(0).toUpperCase() + posMode.slice(1)})`;
+
+  const inp: any = {
+    width: '100%', padding: '8px 10px', borderRadius: 8,
+    border: '1px solid var(--color-border)', background: 'var(--color-surface2)',
+    color: 'var(--color-text)', fontSize: 12, outline: 'none', boxSizing: 'border-box'
+  };
 
   useEffect(() => {
     const calc = () => {
@@ -68,265 +92,165 @@ export default function Futures() {
   }, []);
 
   useEffect(() => {
-    // Ticker
     marketAPI.getTicker(sym).then((res: any) => {
       setTicker(res.data);
       const p = parseFloat(res.data.price || 0);
       if (p > 0) { setPrice(p.toFixed(2)); setTriggerPrice(p.toFixed(2)); }
     });
-    // OrderBook - REST first
     marketAPI.getOrderBook(sym, 15).then((res: any) => {
       setOrderBook(res.data || { bids: [], asks: [] });
     });
     subscribeToTicker(sym);
     subscribeToOrderBook(sym);
-    // Socket live orderbook
     const socket = getSocket();
     socket.on('orderbook', (data: any) => {
       if (data.symbol === sym) setOrderBook({ ...data });
     });
-    return () => {
-      socket.off('orderbook');
-      unsubscribeBinanceOrderBook();
-    };
+    return () => { socket.off('orderbook'); unsubscribeBinanceOrderBook(); };
   }, [symbol]);
 
-  const marginLabel = `${marginMode.charAt(0).toUpperCase() + marginMode.slice(1)} (${posMode.charAt(0).toUpperCase() + posMode.slice(1)})`;
-
-  const inp: any = {
-    width: '100%', padding: '8px 10px', borderRadius: 8,
-    border: '1px solid var(--color-border)', background: 'var(--color-surface2)',
-    color: 'var(--color-text)', fontSize: 12, outline: 'none', boxSizing: 'border-box'
-  };
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh',
-                  overflow: 'hidden', background: 'var(--color-bg)', position: 'relative' }}>
-
-      {/* HEADER */}
-      <FuturesHeader
-        sym={sym} baseSym={baseSym}
-        currentPrice={currentPrice} change24h={change24h} isUp={isUp}
-        onCopyTrade={() => setShowComingSoon(true)}
-      />
-
-      {/* MAIN SPLIT — flexShrink:0 like Trade page */}
-      <div style={{ display: 'flex', flexShrink: 0 }}>
-
-        {/* LEFT: Order Form */}
-        <div style={{ flex: 1, maxHeight: '58vh', overflowY: 'auto', padding: '8px 8px',
-                      display: 'flex', flexDirection: 'column', gap: 5 }}>
-
-          {/* Margin + Leverage */}
-          <div style={{ display: 'flex', gap: 6 }}>
-            <button onClick={() => setShowMargin(true)} style={{
-              flex: 2, padding: '6px', borderRadius: 8, cursor: 'pointer', fontSize: 11,
+  const renderOrderForm = () => (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 5, padding: '8px' }}>
+      <div style={{ display: 'flex', gap: 6 }}>
+        <button onClick={() => setShowMargin(true)} style={{
+          flex: 2, padding: '6px', borderRadius: 8, cursor: 'pointer', fontSize: 11,
+          border: '1px solid var(--color-border)',
+          background: 'var(--color-surface2)', color: 'var(--color-text)', fontWeight: 600
+        }}>{marginLabel}</button>
+        <button onClick={() => setShowLeverage(true)} style={{
+          flex: 1, padding: '6px', borderRadius: 8, cursor: 'pointer', fontSize: 12,
+          border: '1px solid var(--color-border)',
+          background: 'var(--color-surface2)', color: 'var(--color-primary)', fontWeight: 700
+        }}>{leverage}x</button>
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', borderRadius: 8,
+                    overflow: 'hidden', border: '1px solid var(--color-border)' }}>
+        {(['open','close'] as const).map(t => (
+          <button key={t} onClick={() => setOpenClose(t)} style={{
+            padding: '7px', border: 'none', fontSize: 12, cursor: 'pointer',
+            fontWeight: openClose === t ? 600 : 400,
+            background: openClose === t ? 'var(--color-surface2)' : 'transparent',
+            color: openClose === t ? 'var(--color-text)' : 'var(--color-muted)'
+          }}>{t.charAt(0).toUpperCase() + t.slice(1)}</button>
+        ))}
+      </div>
+      <select value={orderType} onChange={e => setOrderType(e.target.value as OrderType)} style={inp}>
+        {ORDER_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
+      </select>
+      {orderType === 'Trigger' && (
+        <input value={triggerPrice} onChange={e => setTriggerPrice(e.target.value)}
+          type="number" placeholder="Trigger price" style={inp} />
+      )}
+      {orderType === 'Trailing stop' && (
+        <div style={{ display: 'flex', gap: 6 }}>
+          <input value={callbackRate} onChange={e => setCallbackRate(e.target.value)}
+            type="number" placeholder="Rate %" style={{ ...inp, flex: 1 }} />
+          {['1%','2%'].map(v => (
+            <button key={v} onClick={() => setCallbackRate(v.replace('%',''))} style={{
+              padding: '8px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 11,
               border: '1px solid var(--color-border)',
-              background: 'var(--color-surface2)', color: 'var(--color-text)', fontWeight: 600
-            }}>{marginLabel}</button>
-            <button onClick={() => setShowLeverage(true)} style={{
-              flex: 1, padding: '6px', borderRadius: 8, cursor: 'pointer', fontSize: 12,
-              border: '1px solid var(--color-border)',
-              background: 'var(--color-surface2)', color: 'var(--color-primary)', fontWeight: 700
-            }}>{leverage}x</button>
-          </div>
-
-          {/* Open/Close */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr',
-                        borderRadius: 8, overflow: 'hidden', flexShrink: 0,
-                        border: '1px solid var(--color-border)' }}>
-            {(['open','close'] as const).map(t => (
-              <button key={t} onClick={() => setOpenClose(t)} style={{
-                padding: '7px', border: 'none', fontSize: 12, cursor: 'pointer',
-                fontWeight: openClose === t ? 600 : 400,
-                background: openClose === t ? 'var(--color-surface2)' : 'transparent',
-                color: openClose === t ? 'var(--color-text)' : 'var(--color-muted)'
-              }}>{t.charAt(0).toUpperCase() + t.slice(1)}</button>
-            ))}
-          </div>
-
-          {/* Order Type */}
-          <select value={orderType}
-            onChange={e => setOrderType(e.target.value as OrderType)}
-            style={{ ...inp }}>
-            {ORDER_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
-          </select>
-
-          {/* Trigger price */}
-          {orderType === 'Trigger' && (
-            <input value={triggerPrice} onChange={e => setTriggerPrice(e.target.value)}
-              type="number" placeholder="Trigger price" style={inp} />
-          )}
-
-          {/* Callback rate */}
-          {orderType === 'Trailing stop' && (
-            <div style={{ display: 'flex', gap: 6 }}>
-              <input value={callbackRate} onChange={e => setCallbackRate(e.target.value)}
-                type="number" placeholder="Rate %" style={{ ...inp, flex: 1 }} />
-              {['1%','2%'].map(v => (
-                <button key={v} onClick={() => setCallbackRate(v.replace('%',''))} style={{
-                  padding: '8px 10px', borderRadius: 8, cursor: 'pointer', fontSize: 11,
-                  border: '1px solid var(--color-border)',
-                  background: callbackRate === v.replace('%','')
-                    ? 'var(--color-surface)' : 'var(--color-surface2)',
-                  color: 'var(--color-text)'
-                }}>{v}</button>
-              ))}
-            </div>
-          )}
-
-          {/* Limit price */}
-          {(orderType === 'Limit' || orderType === 'Trigger') && (
-            <input value={price} onChange={e => setPrice(e.target.value)}
-              type="number" placeholder="Price (USDT)" style={inp} />
-          )}
-
-          {/* Amount */}
-          <div style={{ position: 'relative' }}>
-            <input value={amount} onChange={e => setAmount(e.target.value)}
-              type="number" placeholder="Amount"
-              style={{ ...inp, paddingRight: 55 }} />
-            <div style={{ position: 'absolute', right: 8, top: '50%',
-                          transform: 'translateY(-50%)', fontSize: 11,
-                          color: 'var(--color-primary)', fontWeight: 600 }}>
-              USDT ▼
-            </div>
-          </div>
-
-          {/* Available */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-            <span style={{ color: 'var(--color-muted)' }}>Available</span>
-            <span style={{ color: 'var(--color-text)', fontWeight: 600 }}>0.0000 USDT ⊕</span>
-          </div>
-
-          {/* Slider */}
-          <div>
-            <input type="range" min={0} max={100} value={amountPct}
-              onChange={e => setAmountPct(parseInt(e.target.value))}
-              style={{ width: '100%', accentColor: 'var(--color-success)' }} />
-            <div style={{ display: 'flex', justifyContent: 'space-between',
-                          fontSize: 10, color: 'var(--color-muted)' }}>
-              {[0,25,50,75,100].map(p => (
-                <span key={p} onClick={() => setAmountPct(p)}
-                  style={{ cursor: 'pointer' }}>{p}%</span>
-              ))}
-            </div>
-          </div>
-
-          {/* TP/SL */}
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}
-                 onClick={() => {
-                   if (!tpSlEnabled) { setTpSlEnabled(true); setShowTpSl(true); }
-                   else setTpSlEnabled(false);
-                 }}>
-              <div style={{
-                width: 15, height: 15, borderRadius: 3,
-                border: '1px solid var(--color-border)',
-                background: tpSlEnabled ? 'var(--color-primary)' : 'transparent',
-                display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9
-              }}>{tpSlEnabled && '✓'}</div>
-              <span style={{ fontSize: 11, color: 'var(--color-muted)' }}>TP/SL</span>
-            </div>
-            {tpSlEnabled && (tpValue || slValue) && (
-              <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
-                {tpValue && (
-                  <div style={{ flex: 1, padding: '4px 6px', borderRadius: 6,
-                                background: 'rgba(14,203,129,0.1)', fontSize: 11 }}>
-                    <span style={{ color: 'var(--color-muted)' }}>TP: </span>
-                    <span style={{ color: 'var(--color-success)' }}>{tpValue}</span>
-                  </div>
-                )}
-                {slValue && (
-                  <div style={{ flex: 1, padding: '4px 6px', borderRadius: 6,
-                                background: 'rgba(246,70,93,0.1)', fontSize: 11 }}>
-                    <span style={{ color: 'var(--color-muted)' }}>SL: </span>
-                    <span style={{ color: 'var(--color-danger)' }}>{slValue}</span>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-
-          {/* Open Long section */}
-          {[['Max. open','-- USDT'],['Cost','-- USDT']].map(([l,v]) => (
-            <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-              <span style={{ color: 'var(--color-muted)' }}>{l}</span>
-              <span style={{ color: 'var(--color-muted)' }}>{v}</span>
-            </div>
+              background: callbackRate === v.replace('%','') ? 'var(--color-surface)' : 'var(--color-surface2)',
+              color: 'var(--color-text)'
+            }}>{v}</button>
           ))}
-          <button onClick={() => setShowComingSoon(true)} style={{
-            width: '100%', padding: '11px', borderRadius: 10, border: 'none',
-            background: 'var(--color-success)', color: '#fff',
-            fontSize: 13, fontWeight: 700, cursor: 'pointer'
-          }}>Open long</button>
-
-          {/* Open Short section */}
-          {[['Max. open','-- USDT'],['Cost','-- USDT']].map(([l,v]) => (
-            <div key={'s'+l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
-              <span style={{ color: 'var(--color-muted)' }}>{l}</span>
-              <span style={{ color: 'var(--color-muted)' }}>{v}</span>
-            </div>
-          ))}
-          <button onClick={() => setShowComingSoon(true)} style={{
-            width: '100%', padding: '11px', borderRadius: 10, border: 'none',
-            background: 'var(--color-danger)', color: '#fff',
-            fontSize: 13, fontWeight: 700, cursor: 'pointer'
-          }}>Open short</button>
-
         </div>
-
-        {/* RIGHT: Order Book */}
-        <div style={{ width: '44%', maxHeight: '58vh', overflowY: 'auto',
-                      borderLeft: '1px solid var(--color-border)' }}>
-          <FuturesOrderBook
-            bids={orderBook.bids || []} asks={orderBook.asks || []}
-            currentPrice={currentPrice} isUp={isUp}
-            countdown={countdown}
-            onPriceClick={(p: string) => setPrice(p)}
-          />
+      )}
+      {(orderType === 'Limit' || orderType === 'Trigger') && (
+        <input value={price} onChange={e => setPrice(e.target.value)}
+          type="number" placeholder="Price (USDT)" style={inp} />
+      )}
+      <div style={{ position: 'relative' }}>
+        <input value={amount} onChange={e => setAmount(e.target.value)}
+          type="number" placeholder="Amount" style={{ ...inp, paddingRight: 55 }} />
+        <div style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)',
+                      fontSize: 11, color: 'var(--color-primary)', fontWeight: 600 }}>USDT</div>
+      </div>
+      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+        <span style={{ color: 'var(--color-muted)' }}>Available</span>
+        <span style={{ color: 'var(--color-text)', fontWeight: 600 }}>0.0000 USDT</span>
+      </div>
+      <div>
+        <input type="range" min={0} max={100} value={amountPct}
+          onChange={e => setAmountPct(parseInt(e.target.value))}
+          style={{ width: '100%', accentColor: 'var(--color-success)' }} />
+        <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 10, color: 'var(--color-muted)' }}>
+          {[0,25,50,75,100].map(p => (
+            <span key={p} onClick={() => setAmountPct(p)} style={{ cursor: 'pointer' }}>{p}%</span>
+          ))}
         </div>
       </div>
-
-      {/* BOTTOM: Positions — flex:1 remaining space */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column',
-                    overflow: 'hidden', minHeight: 0,
-                    borderTop: '1px solid var(--color-border)' }}>
-        <FuturesPositions />
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer' }}
+          onClick={() => { if (!tpSlEnabled) { setTpSlEnabled(true); setShowTpSl(true); } else setTpSlEnabled(false); }}>
+          <div style={{ width: 15, height: 15, borderRadius: 3, border: '1px solid var(--color-border)',
+                        background: tpSlEnabled ? 'var(--color-primary)' : 'transparent',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 9 }}>
+            {tpSlEnabled && 'v'}
+          </div>
+          <span style={{ fontSize: 11, color: 'var(--color-muted)' }}>TP/SL</span>
+        </div>
+        {tpSlEnabled && (tpValue || slValue) && (
+          <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
+            {tpValue && <div style={{ flex: 1, padding: '4px 6px', borderRadius: 6,
+                                      background: 'rgba(14,203,129,0.1)', fontSize: 11 }}>
+              <span style={{ color: 'var(--color-muted)' }}>TP: </span>
+              <span style={{ color: 'var(--color-success)' }}>{tpValue}</span>
+            </div>}
+            {slValue && <div style={{ flex: 1, padding: '4px 6px', borderRadius: 6,
+                                      background: 'rgba(246,70,93,0.1)', fontSize: 11 }}>
+              <span style={{ color: 'var(--color-muted)' }}>SL: </span>
+              <span style={{ color: 'var(--color-danger)' }}>{slValue}</span>
+            </div>}
+          </div>
+        )}
       </div>
+      {[['Max. open','-- USDT'],['Cost','-- USDT']].map(([l,v]) => (
+        <div key={l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+          <span style={{ color: 'var(--color-muted)' }}>{l}</span>
+          <span style={{ color: 'var(--color-muted)' }}>{v}</span>
+        </div>
+      ))}
+      <button onClick={() => setShowComingSoon(true)} style={{
+        width: '100%', padding: '11px', borderRadius: 10, border: 'none',
+        background: 'var(--color-success)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer'
+      }}>Open long</button>
+      {[['Max. open','-- USDT'],['Cost','-- USDT']].map(([l,v]) => (
+        <div key={'s'+l} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11 }}>
+          <span style={{ color: 'var(--color-muted)' }}>{l}</span>
+          <span style={{ color: 'var(--color-muted)' }}>{v}</span>
+        </div>
+      ))}
+      <button onClick={() => setShowComingSoon(true)} style={{
+        width: '100%', padding: '11px', borderRadius: 10, border: 'none',
+        background: 'var(--color-danger)', color: '#fff', fontSize: 13, fontWeight: 700, cursor: 'pointer'
+      }}>Open short</button>
+    </div>
+  );
 
-      {/* Bottom Sheets */}
-      {showLeverage && (
-        <LeverageSheet leverage={leverage}
-          onConfirm={lev => setLeverage(lev)}
-          onClose={() => setShowLeverage(false)} />
-      )}
-      {showMargin && (
-        <MarginModeSheet marginMode={marginMode} positionMode={posMode}
-          onConfirm={(m, p) => { setMarginMode(m); setPosMode(p); }}
-          onClose={() => setShowMargin(false)} />
-      )}
-      {showTpSl && (
-        <TpSlSheet currentPrice={currentPrice} side="long"
-          onConfirm={(tp, sl) => { setTpValue(tp); setSlValue(sl); }}
-          onClose={() => setShowTpSl(false)} />
-      )}
-
-      {/* Coming Soon Modal */}
+  const renderSheets = () => (
+    <>
+      {showLeverage && <LeverageSheet leverage={leverage}
+        onConfirm={lev => setLeverage(lev)} onClose={() => setShowLeverage(false)} />}
+      {showMargin && <MarginModeSheet marginMode={marginMode} positionMode={posMode}
+        onConfirm={(m, p) => { setMarginMode(m); setPosMode(p); }}
+        onClose={() => setShowMargin(false)} />}
+      {showTpSl && <TpSlSheet currentPrice={currentPrice} side="long"
+        onConfirm={(tp, sl) => { setTpValue(tp); setSlValue(sl); }}
+        onClose={() => setShowTpSl(false)} />}
       {showComingSoon && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
-                      zIndex: 200, display: 'flex', alignItems: 'center',
-                      justifyContent: 'center' }}
-             onClick={() => setShowComingSoon(false)}>
+                      zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setShowComingSoon(false)}>
           <div style={{ background: 'var(--color-surface)', borderRadius: 16,
                         padding: '30px 24px', textAlign: 'center', margin: '0 20px',
                         border: '1px solid var(--color-border)' }}
-               onClick={e => e.stopPropagation()}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>⚡</div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--color-text)',
-                          marginBottom: 8 }}>Futures Coming Soon!</div>
+            onClick={e => e.stopPropagation()}>
+            <div style={{ fontSize: 40, marginBottom: 12 }}>!</div>
+            <div style={{ fontSize: 18, fontWeight: 700, color: 'var(--color-text)', marginBottom: 8 }}>
+              Futures Coming Soon!
+            </div>
             <div style={{ fontSize: 13, color: 'var(--color-muted)', marginBottom: 20 }}>
-              Futures trading is under development.{'\n'}Use Spot trading for now.
+              Futures trading is under development. Use Spot trading for now.
             </div>
             <button onClick={() => setShowComingSoon(false)} style={{
               padding: '12px 32px', borderRadius: 10, border: 'none',
@@ -336,6 +260,130 @@ export default function Futures() {
           </div>
         </div>
       )}
+    </>
+  );
+
+  // MOBILE LAYOUT
+  if (!desktop) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100vh',
+                    overflow: 'hidden', background: 'var(--color-bg)', position: 'relative' }}>
+        <FuturesHeader sym={sym} baseSym={baseSym} currentPrice={currentPrice}
+          change24h={change24h} isUp={isUp} onCopyTrade={() => setShowComingSoon(true)} />
+        <div style={{ display: 'flex', flexShrink: 0 }}>
+          <div style={{ flex: 1, maxHeight: '58vh', overflowY: 'auto',
+                        display: 'flex', flexDirection: 'column', gap: 5 }}>
+            {renderOrderForm()}
+          </div>
+          <div style={{ width: '44%', maxHeight: '58vh', overflowY: 'auto',
+                        borderLeft: '1px solid var(--color-border)' }}>
+            <FuturesOrderBook bids={orderBook.bids||[]} asks={orderBook.asks||[]}
+              currentPrice={currentPrice} isUp={isUp} countdown={countdown}
+              onPriceClick={(p: string) => setPrice(p)} />
+          </div>
+        </div>
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+                      minHeight: 0, borderTop: '1px solid var(--color-border)' }}>
+          <FuturesPositions />
+        </div>
+        {renderSheets()}
+      </div>
+    );
+  }
+
+  // DESKTOP LAYOUT
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh',
+                  overflow: 'hidden', background: 'var(--color-bg)' }}>
+
+      {/* Desktop Header */}
+      <div style={{ height: 56, flexShrink: 0, background: 'var(--color-bg)',
+                    borderBottom: '1px solid var(--color-border)',
+                    padding: '0 16px', display: 'flex', alignItems: 'center', gap: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, cursor: 'pointer',
+                      minWidth: 160, padding: '6px 10px', borderRadius: 8,
+                      background: 'var(--color-surface)', border: '1px solid var(--color-border)' }}
+          onClick={() => navigate('/markets?from=futures')}>
+          <span style={{ fontWeight: 800, fontSize: 16 }}>{baseSym}</span>
+          <span style={{ color: 'var(--color-muted)', fontSize: 13 }}>/USDT</span>
+          <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4,
+                         background: 'rgba(255,255,255,0.08)', color: 'var(--color-muted)' }}>Perp</span>
+          <ChevronDown size={13} color="var(--color-muted)" />
+        </div>
+        <div style={{ fontSize: 20, fontWeight: 800,
+                      color: isUp ? 'var(--color-success)' : 'var(--color-danger)' }}>
+          {currentPrice > 0 ? currentPrice.toLocaleString(undefined,
+            { minimumFractionDigits: 2, maximumFractionDigits: 6 }) : '---'}
+        </div>
+        <div style={{ width: 1, height: 28, background: 'var(--color-border)' }} />
+        {[
+          { label: '24h Change', val: `${isUp?'+':''}${change24h.toFixed(2)}%`,
+            color: isUp ? 'var(--color-success)' : 'var(--color-danger)' },
+          { label: '24h High',  val: high24h > 0 ? high24h.toFixed(2) : '---',
+            color: 'var(--color-success)' },
+          { label: '24h Low',   val: low24h > 0 ? low24h.toFixed(2) : '---',
+            color: 'var(--color-danger)' },
+          { label: '24h Vol',   val: vol24h > 1e6 ? `${(vol24h/1e6).toFixed(2)}M`
+            : vol24h > 1e3 ? `${(vol24h/1e3).toFixed(2)}K` : vol24h.toFixed(2),
+            color: 'var(--color-text)' },
+          { label: 'Funding',   val: `${fundingRate.toFixed(6)}%`,
+            color: fundingRate < 0 ? 'var(--color-danger)' : 'var(--color-success)' },
+          { label: 'Countdown', val: countdown, color: 'var(--color-muted)' },
+        ].map(({ label, val, color }) => (
+          <div key={label} style={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <span style={{ fontSize: 10, color: 'var(--color-muted)' }}>{label}</span>
+            <span style={{ fontSize: 12, fontWeight: 600, color }}>{val}</span>
+          </div>
+        ))}
+        <div style={{ flex: 1 }} />
+        <div style={{ display: 'flex', gap: 4 }}>
+          {['Futures', 'TradFi', 'Copy trade'].map(tab => (
+            <button key={tab} onClick={() => tab !== 'Futures' && setShowComingSoon(true)} style={{
+              padding: '6px 14px', borderRadius: 8, border: 'none', cursor: 'pointer',
+              fontSize: 13, fontWeight: 600,
+              background: tab === 'Futures' ? 'var(--color-surface2)' : 'transparent',
+              color: tab === 'Futures' ? 'var(--color-text)' : 'var(--color-muted)'
+            }}>{tab}</button>
+          ))}
+        </div>
+        <CandlestickChart size={20} color="var(--color-muted)"
+          style={{ cursor: 'pointer' }} onClick={() => navigate('/chart/' + sym)} />
+      </div>
+
+      {/* Main 3-col Layout */}
+      <div style={{ flex: 1, display: 'flex', overflow: 'hidden', minHeight: 0 }}>
+
+        {/* LEFT: OrderBook */}
+        <div style={{ width: 220, flexShrink: 0, borderRight: '1px solid var(--color-border)',
+                      display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+          <div style={{ flex: 1, overflow: 'auto' }}>
+            <FuturesOrderBook bids={orderBook.bids||[]} asks={orderBook.asks||[]}
+              currentPrice={currentPrice} isUp={isUp} countdown={countdown}
+              fundingRate={fundingRate} onPriceClick={(p: string) => setPrice(p)} />
+          </div>
+        </div>
+
+        {/* MIDDLE: Chart + Positions */}
+        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden',
+                      minWidth: 0, borderRight: '1px solid var(--color-border)' }}>
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column',
+                        overflow: 'hidden', minHeight: 0 }}>
+            <CandleChart sym={sym} currentPrice={currentPrice} />
+          </div>
+          <div style={{ height: 200, flexShrink: 0, borderTop: '1px solid var(--color-border)',
+                        display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <FuturesPositions />
+          </div>
+        </div>
+
+        {/* RIGHT: Order Form */}
+        <div style={{ width: 280, flexShrink: 0, overflow: 'auto',
+                      borderLeft: '1px solid var(--color-border)' }}>
+          {renderOrderForm()}
+        </div>
+      </div>
+
+      {renderSheets()}
     </div>
   );
 }
