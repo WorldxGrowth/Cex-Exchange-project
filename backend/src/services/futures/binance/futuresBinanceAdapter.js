@@ -152,6 +152,26 @@ class FuturesBinanceAdapter {
     return await this.post('/fapi/v1/order', payload);
   }
 
+  // Modify limit order (price/qty change)
+  async modifyOrder(symbol, orderId, clientOrderId, side, quantity, price) {
+    const params = { symbol, side: side.toUpperCase(), quantity, price };
+    if (orderId)       params.orderId = orderId;
+    if (clientOrderId) params.origClientOrderId = clientOrderId;
+    return await this.put('/fapi/v1/order', params);
+  }
+
+  async put(path, params = {}) {
+    try {
+      const body = this.sign(params);
+      const res  = await this.client.put(path, body, {
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' }
+      });
+      return res.data;
+    } catch(err) {
+      throw new Error(err.response?.data?.msg || err.message);
+    }
+  }
+
   async cancelOrder(symbol, orderId = null, clientOrderId = null) {
     const params = { symbol };
     if (orderId)       params.orderId = orderId;

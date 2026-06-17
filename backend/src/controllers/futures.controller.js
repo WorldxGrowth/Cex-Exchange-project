@@ -120,6 +120,19 @@ async function placeOrder(req, res) {
       return error(res, `Insufficient futures balance. Need $${cost.toFixed(4)} USDT`, 400);
     }
 
+
+    // Validate TP/SL direction
+    if (take_profit || stop_loss) {
+      const tp = take_profit ? parseFloat(take_profit) : null;
+      const sl = stop_loss ? parseFloat(stop_loss) : null;
+      if (side.toLowerCase() === 'buy') {
+        if (tp && tp <= orderPrice) { await client.query('ROLLBACK'); return error(res, `TP (${tp}) must be above entry (${orderPrice.toFixed(2)}) for LONG`, 400); }
+        if (sl && sl >= orderPrice) { await client.query('ROLLBACK'); return error(res, `SL (${sl}) must be below entry (${orderPrice.toFixed(2)}) for LONG`, 400); }
+      } else {
+        if (tp && tp >= orderPrice) { await client.query('ROLLBACK'); return error(res, `TP (${tp}) must be below entry (${orderPrice.toFixed(2)}) for SHORT`, 400); }
+        if (sl && sl <= orderPrice) { await client.query('ROLLBACK'); return error(res, `SL (${sl}) must be above entry (${orderPrice.toFixed(2)}) for SHORT`, 400); }
+      }
+    }
     const notional = parseFloat(quantity) * orderPrice;
     const minNotional = parseFloat(pair.min_notional || 5);
     if (notional < minNotional) {
@@ -544,6 +557,63 @@ async function calculateOrderCost(req, res) {
   }
 }
 
+// ── Modify Order ────────────────────────────────────────────
+async function modifyOrder(req, res) {
+  try {
+    const userId  = req.user.id;
+    const orderId = parseInt(req.params.order_id);
+    const { price, quantity } = req.body;
+
+    if (!price && !quantity) {
+      return error(res, 'price or quantity required', 400);
+    }
+
+    const { rows: [order] } = await db.query(
+      `SELECT fo.*, fp.is_custom, fp.step_size, fp.price_precision
+       FROM futures_orders fo
+       JOIN futures_pairs fp ON fp.id = fo.pair_id
+       WHERE fo.id=$1 AND fo.user_id=$2`,
+      [orderId, userId]
+    );
+
+    if (!order) return error(res, 'Order not found', 404);
+    if (order.status !== 'open') return error(res, 'Only open orders can be modified', 400);
+    if (order.order_type !== 'limit') return error(res, 'Only limit orders can be modified', 400);
+
+    const newPrice = parseFloat(price || order.price);
+    const newQty   = parseFloat(quantity || order.quantity);
+
+    if (!order.is_custom) {
+      // Binance modify
+      const { getFuturesBinanceAdapter } = require('../services/futures/binance/futuresBinanceAdapter');
+      const adapter = await getFuturesBinanceAdapter();
+      await adapter.modifyOrder(
+        order.symbol,
+        order.binance_order_id,
+        order.client_order_id,
+        order.side,
+        newQty,
+        newPrice.toFixed(parseInt(order.price_precision || 2))
+      );
+    }
+
+    // Update DB
+    await db.query(
+      `UPDATE futures_orders SET price=$1, quantity=$2, updated_at=NOW() WHERE id=$3`,
+      [newPrice, newQty, orderId]
+    );
+
+    return success(res, {
+      order_id: orderId,
+      price:    newPrice,
+      quantity: newQty,
+      status:   'modified',
+    });
+  } catch(err) {
+    return error(res, err.message);
+  }
+}
+
 // ── Liquidation Logs ─────────────────────────────────────────
 async function getLiquidationLogs(req, res) {
   try {
@@ -576,4 +646,5 @@ module.exports = {
   getUserSettings,
   calculateOrderCost,
   getLiquidationLogs,
+  modifyOrder,
 };

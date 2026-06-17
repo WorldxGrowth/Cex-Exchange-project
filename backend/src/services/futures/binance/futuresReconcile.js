@@ -8,6 +8,7 @@ const { getFuturesBinanceAdapter } = require('./futuresBinanceAdapter');
 const { processFill } = require('./futuresBinanceHedge');
 
 async function run() {
+  return; // Disabled - UserDataStream handles this
   try {
     // Get all open Binance futures orders in DB
     const { rows: openOrders } = await db.query(
@@ -16,7 +17,8 @@ async function run() {
        JOIN futures_pairs fp ON fp.id = fo.pair_id
        WHERE fo.status IN ('open','partially_filled')
          AND fo.is_custom = false
-         AND fo.binance_order_id IS NOT NULL`
+         AND fo.binance_order_id IS NOT NULL
+         AND fo.created_at > NOW() - INTERVAL '1 hour'`
     );
 
     if (!openOrders.length) return;
