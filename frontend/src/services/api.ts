@@ -161,6 +161,7 @@ export const futuresAPI = {
   // Positions
   getPositions:  ()                    => api.get('/futures/positions'),
   closePosition: (id: number, d?: any) => api.post(`/futures/positions/${id}/close`, d || {}),
+  updateTpSl:    (id: number, d: any)  => api.put(`/futures/positions/${id}/tpsl`, d),
 
   // Trades & Liquidations
   getTrades:       (symbol?: string) =>

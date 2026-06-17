@@ -614,6 +614,79 @@ async function modifyOrder(req, res) {
   }
 }
 
+// ── Update TP/SL on open position ────────────────────────────
+async function updatePositionTpSl(req, res) {
+  try {
+    const userId     = req.user.id;
+    const positionId = parseInt(req.params.position_id);
+    const { take_profit, stop_loss } = req.body;
+
+    if (!take_profit && !stop_loss) {
+      return error(res, 'take_profit or stop_loss required', 400);
+    }
+
+    const { rows: [pos] } = await db.query(
+      `SELECT p.*, fp.is_custom, fp.step_size
+       FROM futures_positions p
+       JOIN futures_pairs fp ON fp.id = p.pair_id
+       WHERE p.id=$1 AND p.user_id=$2 AND p.status='open'`,
+      [positionId, userId]
+    );
+    if (!pos) return error(res, 'Position not found', 404);
+
+    const tp = take_profit ? parseFloat(take_profit) : null;
+    const sl = stop_loss   ? parseFloat(stop_loss)   : null;
+    const ep = parseFloat(pos.entry_price);
+
+    if (pos.side === 'long') {
+      if (tp && tp <= ep) return error(res, `TP must be above entry (${ep.toFixed(2)}) for LONG`, 400);
+      if (sl && sl >= ep) return error(res, `SL must be below entry (${ep.toFixed(2)}) for LONG`, 400);
+    } else {
+      if (tp && tp >= ep) return error(res, `TP must be below entry (${ep.toFixed(2)}) for SHORT`, 400);
+      if (sl && sl <= ep) return error(res, `SL must be above entry (${ep.toFixed(2)}) for SHORT`, 400);
+    }
+
+    await db.query(
+      `UPDATE futures_positions SET take_profit=$1, stop_loss=$2, updated_at=NOW() WHERE id=$3`,
+      [tp, sl, positionId]
+    );
+
+    if (!pos.is_custom) {
+      setImmediate(async () => {
+        try {
+          const { getFuturesBinanceAdapter } = require('../services/futures/binance/futuresBinanceAdapter');
+          const adapter   = await getFuturesBinanceAdapter();
+          await adapter.delete('/fapi/v1/algoOpenOrders', { symbol: pos.symbol });
+          const qty       = parseFloat(pos.quantity);
+          const closeSide = pos.side === 'long' ? 'SELL' : 'BUY';
+          if (tp) {
+            await adapter.placeAlgoOrder({
+              symbol: pos.symbol, side: closeSide,
+              type: 'TAKE_PROFIT_MARKET', quantity: qty,
+              triggerPrice: tp, workingType: 'MARK_PRICE', reduceOnly: true,
+            });
+            console.log(`[FuturesCtrl] TP set @ ${tp} pos=${positionId}`);
+          }
+          if (sl) {
+            await adapter.placeAlgoOrder({
+              symbol: pos.symbol, side: closeSide,
+              type: 'STOP_MARKET', quantity: qty,
+              triggerPrice: sl, workingType: 'MARK_PRICE', reduceOnly: true,
+            });
+            console.log(`[FuturesCtrl] SL set @ ${sl} pos=${positionId}`);
+          }
+        } catch(e) {
+          console.warn('[FuturesCtrl] updateTpSl Binance error:', e.message);
+        }
+      });
+    }
+
+    return success(res, { position_id: positionId, take_profit: tp, stop_loss: sl, message: 'TP/SL updated' });
+  } catch(err) {
+    return error(res, err.message);
+  }
+}
+
 // ── Liquidation Logs ─────────────────────────────────────────
 async function getLiquidationLogs(req, res) {
   try {
@@ -647,4 +720,5 @@ module.exports = {
   calculateOrderCost,
   getLiquidationLogs,
   modifyOrder,
+  updatePositionTpSl,
 };

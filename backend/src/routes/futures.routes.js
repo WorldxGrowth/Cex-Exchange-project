@@ -16,6 +16,19 @@ const cancelLimit = rateLimit({
 });
 
 // ── Public ───────────────────────────────────────────────────
+router.get('/orderbook/:symbol', async (req, res) => {
+  try {
+    const axios = require('axios');
+    const sym   = req.params.symbol.toUpperCase();
+    const limit = req.query.limit || 20;  // Binance valid: 5,10,20,50,100
+    const r = await axios.get(`https://fapi.binance.com/fapi/v1/depth?symbol=${sym}&limit=${limit}`, { timeout: 5000 });
+    const d = r.data;
+    const bids = (d.bids||[]).map((b) => ({ price: String(b[0]), qty: String(b[1]) }));
+    const asks = (d.asks||[]).map((a) => ({ price: String(a[0]), qty: String(a[1]) }));
+    console.log('[FuturesOB] bids:', bids.length, 'asks:', asks.length);
+    res.json({ status: '1', message: 'Success', data: { bids, asks } });
+  } catch(e) { res.json({ status: '0', message: e.message, data: { bids: [], asks: [] } }); }
+});
 router.get('/pairs',              ctrl.getFuturesPairs);
 router.get('/pairs/:symbol',      ctrl.getFuturesPairInfo);
 router.get('/funding-rates',      ctrl.getFundingRateHistory);
@@ -38,6 +51,7 @@ router.get('/orders/history',     ctrl.getOrderHistory);
 // Positions
 router.get('/positions',          ctrl.getPositions);
 router.post('/positions/:position_id/close', ctrl.closePositionEndpoint);
+router.put('/positions/:position_id/tpsl',  ctrl.updatePositionTpSl);
 
 // Trade history + Liquidations
 router.get('/trades',             ctrl.getTradeHistory);
