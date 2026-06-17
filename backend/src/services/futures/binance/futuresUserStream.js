@@ -165,28 +165,28 @@ async function handleEvent(msg) {
 
   // ── ALGO_UPDATE (TP/SL/Trailing hit) ────────────────────
   if (event === 'ALGO_UPDATE') {
-    // Binance ALGO_UPDATE fields (from docs):
-    // msg.ao = algo order object
-    // ao.ai = algoId, ao.ca = clientAlgoId
-    // ao.s  = symbol, ao.S = side
-    // ao.T  = orderType (TAKE_PROFIT_MARKET/STOP_MARKET)
-    // ao.as = algoStatus (NEW/FILLED/CANCELED/EXPIRED)
-    // ao.sp = triggerPrice, ao.ap = avgPrice
-    // ao.z  = executedQty
-    const ao      = msg.ao || {};
-    const algoId  = (ao.ai || ao.j || '').toString();
-    const type    = ao.T || ao.ot || '';   // orderType
-    const status  = ao.as || ao.X || '';  // algoStatus
-    const symbol  = ao.s || '';
-    const side    = ao.S || '';
-    const trigPx  = parseFloat(ao.sp || ao.SP || 0);
-    const fillPx  = parseFloat(ao.ap || trigPx);
-    const fillQty = parseFloat(ao.z || ao.q || 0);
+    // Real Binance ALGO_UPDATE structure (captured live):
+    // msg.o = order object (NOT msg.ao!)
+    // o.aid = algoId
+    // o.o   = orderType (TAKE_PROFIT_MARKET/STOP_MARKET)
+    // o.s   = symbol, o.S = side
+    // o.X   = status (NEW/TRIGGERING/TRIGGERED/FINISHED/CANCELED)
+    // o.ap  = avgFillPrice (on FINISHED)
+    // o.aq  = executedQty (on FINISHED)
+    // o.q   = quantity
+    // o.tp  = triggerPrice
+    const ao      = msg.o || {};
+    const algoId  = (ao.aid || '').toString();
+    const type    = ao.o  || '';   // TAKE_PROFIT_MARKET / STOP_MARKET
+    const status  = ao.X  || '';   // NEW/TRIGGERING/TRIGGERED/FINISHED/CANCELED
+    const symbol  = ao.s  || '';
+    const side    = ao.S  || '';
+    const fillPx  = parseFloat(ao.ap || 0);
+    const fillQty = parseFloat(ao.aq || ao.q || 0);
 
     console.log(`[FuturesUserStream] ALGO_UPDATE: ${symbol} ${type} status=${status} algoId=${algoId} fillQty=${fillQty} fillPx=${fillPx}`);
-    console.log('[FuturesUserStream] ALGO_UPDATE RAW ao:', JSON.stringify(ao));
 
-    if (status === 'FILLED' && fillQty > 0 && fillPx > 0) {
+    if ((status === 'FINISHED' || status === 'FILLED') && fillQty > 0 && fillPx > 0) {
       // Find the open position for this symbol
       // TP hits → close LONG; SL hits → close LONG
       // For SELL algo orders → it was a LONG position close
