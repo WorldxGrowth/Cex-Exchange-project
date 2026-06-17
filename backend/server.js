@@ -160,33 +160,37 @@ try {
   console.error('Futures UserStream FAILED:', e.message);
 }
 
-// ── Futures PnL Live Update (via price feed) ───────
-// Updates unrealized_pnl for all open positions every 2 sec
-const { updatePositionsPnl } = require('./src/services/futures/shared/pnlCalculator');
-setInterval(async () => {
-  try {
-    const db = require('./src/config/database');
-    const { rows: pairs } = await db.query(
-      `SELECT DISTINCT fp.symbol, fp.base_coin_id
-       FROM futures_positions p
-       JOIN futures_pairs fp ON fp.id = p.pair_id
-       WHERE p.status = 'open'`
-    );
-    for (const pair of pairs) {
-      const { rows: [feed] } = await db.query(
-        `SELECT price_usdt FROM price_feeds
-         WHERE coin_id = $1 ORDER BY updated_at DESC LIMIT 1`,
-        [pair.base_coin_id]
+// ── Futures Mark Price WebSocket (Binance fstream) ──
+// Real futures mark price for accurate PnL calculation
+// Updates every 1s via wss://fstream.binance.com/ws/!markPrice@arr@1s
+try {
+  const futuresMarkPrice = require('./src/services/futures/shared/futuresMarkPrice');
+  futuresMarkPrice.start();
+  console.log('Futures Mark Price WebSocket started (Binance fstream 1s)');
+} catch(e) {
+  console.error('Futures Mark Price FAILED:', e.message);
+  // Fallback: use spot price_feeds every 2s
+  const { updatePositionsPnl } = require('./src/services/futures/shared/pnlCalculator');
+  setInterval(async () => {
+    try {
+      const db = require('./src/config/database');
+      const { rows: pairs } = await db.query(
+        `SELECT DISTINCT fp.symbol, fp.base_coin_id
+         FROM futures_positions p
+         JOIN futures_pairs fp ON fp.id = p.pair_id
+         WHERE p.status = 'open'`
       );
-      if (feed?.price_usdt) {
-        await updatePositionsPnl(pair.symbol, feed.price_usdt);
+      for (const pair of pairs) {
+        const { rows: [feed] } = await db.query(
+          `SELECT price_usdt FROM price_feeds WHERE coin_id = $1 LIMIT 1`,
+          [pair.base_coin_id]
+        );
+        if (feed?.price_usdt) await updatePositionsPnl(pair.symbol, feed.price_usdt);
       }
-    }
-  } catch (e) {
-    // Silent — non-critical
-  }
-}, 2000);
-console.log('Futures PnL updater started (2s interval)');
+    } catch(e) {}
+  }, 2000);
+  console.log('Futures PnL fallback updater started (2s spot price)');
+}
 
 // Futures Reconcile (fallback for limit orders - 1 min)
 const futuresReconcile = require('./src/services/futures/binance/futuresReconcile');

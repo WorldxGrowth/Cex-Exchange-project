@@ -1,40 +1,58 @@
 /**
  * Futures Liquidation Engine
  * Runs every 5 seconds — checks all open positions
- * If markPrice crosses liquidation_price → liquidate
+ * Uses real Binance futures mark price (not spot price)
  */
 const db = require('../../../config/database');
 
 let liquidatorTimer = null;
 
+function getMarkPrice(symbol) {
+  try {
+    const { getMarkPrice: _get } = require('../shared/futuresMarkPrice');
+    return _get(symbol);
+  } catch(e) {
+    return null;
+  }
+}
+
 async function runLiquidationCheck() {
   try {
     const { rows: positions } = await db.query(
-      `SELECT
-         p.*,
-         pf.price_usdt as current_price,
-         fp.maintenance_margin,
-         fp.is_custom
+      `SELECT p.*, fp.maintenance_margin, fp.is_custom, fp.base_coin_id
        FROM futures_positions p
        JOIN futures_pairs fp ON fp.id = p.pair_id
-       LEFT JOIN price_feeds pf ON pf.coin_id = fp.base_coin_id
        WHERE p.status = 'open'
-         AND p.liquidation_price IS NOT NULL
-         AND pf.price_usdt IS NOT NULL`
+         AND p.liquidation_price IS NOT NULL`
     );
 
     for (const pos of positions) {
-      const markPrice = parseFloat(pos.current_price);
-      const liqPrice  = parseFloat(pos.liquidation_price);
-      const side      = pos.side;
+      // Use futures mark price for non-custom, spot price for custom (VDC)
+      let markPrice = null;
+      if (!pos.is_custom) {
+        markPrice = getMarkPrice(pos.symbol);
+      }
+      // Fallback to spot price_feeds for custom pairs or if mark price unavailable
+      if (!markPrice) {
+        const { rows: [feed] } = await db.query(
+          `SELECT price_usdt FROM price_feeds WHERE coin_id=$1 LIMIT 1`,
+          [pos.base_coin_id]
+        );
+        markPrice = feed?.price_usdt ? parseFloat(feed.price_usdt) : null;
+      }
+      if (!markPrice) continue;
+
+      const mp       = parseFloat(markPrice);
+      const liqPrice = parseFloat(pos.liquidation_price);
+      const side     = pos.side;
 
       const shouldLiq =
-        (side === 'long'  && markPrice <= liqPrice) ||
-        (side === 'short' && markPrice >= liqPrice);
+        (side === 'long'  && mp <= liqPrice) ||
+        (side === 'short' && mp >= liqPrice);
 
       if (shouldLiq) {
-        console.log(`[Liquidator] LIQUIDATING pos=${pos.id} ${side} @ liq=${liqPrice} mark=${markPrice}`);
-        await liquidatePosition(pos, markPrice);
+        console.log(`[Liquidator] LIQUIDATING pos=${pos.id} ${side} @ liq=${liqPrice} mark=${mp}`);
+        await liquidatePosition(pos, mp);
       }
     }
   } catch (err) {
@@ -50,9 +68,8 @@ async function liquidatePosition(pos, markPrice) {
     const qty    = parseFloat(pos.quantity);
     const ep     = parseFloat(pos.entry_price);
     const margin = parseFloat(pos.margin);
-    const liqFee = margin * 0.015; // 1.5% liquidation fee
+    const liqFee = margin * 0.015;
 
-    // Realized PnL at liquidation (usually very negative)
     let realizedPnl;
     if (pos.side === 'long') {
       realizedPnl = (markPrice - ep) * qty - liqFee;
@@ -60,7 +77,6 @@ async function liquidatePosition(pos, markPrice) {
       realizedPnl = (ep - markPrice) * qty - liqFee;
     }
 
-    // Close position as liquidated
     await client.query(
       `UPDATE futures_positions SET
          status='liquidated', realized_pnl=$1, mark_price=$2,
@@ -69,7 +85,6 @@ async function liquidatePosition(pos, markPrice) {
       [realizedPnl, markPrice, pos.id]
     );
 
-    // Log liquidation
     await client.query(
       `INSERT INTO futures_liquidation_logs
          (user_id, position_id, pair_id, symbol, side, quantity,
@@ -83,17 +98,14 @@ async function liquidatePosition(pos, markPrice) {
       ]
     );
 
-    // Get USDT coin
     const { rows: [usdt] } = await client.query(
       `SELECT id FROM coins WHERE symbol='USDT' LIMIT 1`
     );
 
     if (usdt) {
       const usdtId    = parseInt(usdt.id);
-      // Return remaining margin after liquidation fee + PnL
       const returnAmt = Math.max(0, margin + realizedPnl);
 
-      // Release locked margin + credit any remaining amount
       await client.query(
         `UPDATE balances SET
            locked    = GREATEST(locked - $1, 0),
@@ -103,7 +115,6 @@ async function liquidatePosition(pos, markPrice) {
         [margin, returnAmt, pos.user_id, usdtId]
       );
 
-      // Ledger entry
       const { rows: [balRow] } = await client.query(
         `SELECT available FROM balances
          WHERE user_id=$1 AND coin_id=$2 AND account_type='futures'`,
@@ -125,7 +136,6 @@ async function liquidatePosition(pos, markPrice) {
 
     await client.query('COMMIT');
 
-    // Notify user via Socket.io
     try {
       const io = require('../../../websocket/socket').getIO?.();
       if (io) {
@@ -139,9 +149,9 @@ async function liquidatePosition(pos, markPrice) {
           message:    `Your ${pos.side} ${pos.symbol} position was liquidated at $${markPrice}`
         });
       }
-    } catch (e) {}
+    } catch(e) {}
 
-    console.log(`[Liquidator] pos=${pos.id} liquidated. PnL=${realizedPnl.toFixed(4)} returned=${Math.max(0, margin+realizedPnl).toFixed(4)}`);
+    console.log(`[Liquidator] pos=${pos.id} liquidated. PnL=${realizedPnl.toFixed(4)}`);
 
   } catch (err) {
     await client.query('ROLLBACK');
@@ -162,24 +172,29 @@ function stop() {
 
 module.exports = { start, stop, runLiquidationCheck, liquidatePosition };
 
-// TP/SL check for internal pairs
+// ── TP/SL check for internal pairs (VDC) ──────────────
 async function checkTpSl() {
   try {
     const { rows: positions } = await db.query(
-      `SELECT p.*, pf.price_usdt as current_price
+      `SELECT p.*, fp.base_coin_id
        FROM futures_positions p
        JOIN futures_pairs fp ON fp.id = p.pair_id
-       LEFT JOIN price_feeds pf ON pf.coin_id = fp.base_coin_id
        WHERE p.status='open'
          AND fp.is_custom=true
-         AND pf.price_usdt IS NOT NULL
          AND (p.take_profit IS NOT NULL OR p.stop_loss IS NOT NULL)`
     );
 
     for (const pos of positions) {
-      const mp = parseFloat(pos.current_price);
+      // VDC uses spot price_feeds
+      const { rows: [feed] } = await db.query(
+        `SELECT price_usdt FROM price_feeds WHERE coin_id=$1 LIMIT 1`,
+        [pos.base_coin_id]
+      );
+      const mp = parseFloat(feed?.price_usdt || 0);
+      if (!mp) continue;
+
       const tp = pos.take_profit ? parseFloat(pos.take_profit) : null;
-      const sl = pos.stop_loss  ? parseFloat(pos.stop_loss)  : null;
+      const sl = pos.stop_loss   ? parseFloat(pos.stop_loss)   : null;
 
       let triggered = null;
       if (pos.side === 'long') {
@@ -195,17 +210,16 @@ async function checkTpSl() {
         const { closePosition } = require('./futuresEngine');
         await closePosition(pos.id, pos.user_id, pos.quantity, mp, true);
 
-        // Notify user
         try {
           const io = require('../../../websocket/socket').getIO?.();
           if (io) {
             io.to(`user:${pos.user_id}`).emit('futures_update', {
-              type: triggered,
+              type:       triggered,
               positionId: pos.id,
-              symbol: pos.symbol,
-              side: pos.side,
-              markPrice: mp,
-              message: `${triggered === 'take_profit' ? 'Take Profit' : 'Stop Loss'} triggered for ${pos.symbol}`
+              symbol:     pos.symbol,
+              side:       pos.side,
+              markPrice:  mp,
+              message:    `${triggered === 'take_profit' ? 'Take Profit' : 'Stop Loss'} triggered for ${pos.symbol}`
             });
           }
         } catch(e) {}
@@ -216,5 +230,4 @@ async function checkTpSl() {
   }
 }
 
-// Export updated module
 module.exports.checkTpSl = checkTpSl;

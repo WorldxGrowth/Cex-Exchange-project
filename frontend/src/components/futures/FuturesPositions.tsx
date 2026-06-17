@@ -1,45 +1,138 @@
-import { useState } from 'react';
-import { ClipboardList } from 'lucide-react';
+import { useState, useEffect, useCallback } from 'react';
+import { ClipboardList, X, ChevronDown } from 'lucide-react';
+import { futuresAPI } from '../../services/api';
+
+interface Props {
+  symbol?: string;
+  refresh?: number;
+  onRefresh?: () => void;
+}
 
 const TABS = [
   { key: 'positions', label: 'Positions' },
   { key: 'orders',    label: 'Orders'    },
-  { key: 'copy',      label: 'Copy trades' },
+  { key: 'history',   label: 'History'   },
 ];
 
-export default function FuturesPositions() {
+export default function FuturesPositions({ symbol, refresh = 0, onRefresh }: Props) {
   const [active, setActive]           = useState('positions');
   const [showCurrent, setShowCurrent] = useState(false);
+  const [positions, setPositions]     = useState<any[]>([]);
+  const [openOrders, setOpenOrders]   = useState<any[]>([]);
+  const [history, setHistory]         = useState<any[]>([]);
+  const [loading, setLoading]         = useState(false);
+  const [closingId, setClosingId]     = useState<number|null>(null);
+  const [cancellingId, setCancellingId] = useState<number|null>(null);
+  const [showClose, setShowClose]     = useState<any>(null);
+  const [closeQty, setCloseQty]       = useState('');
+
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const [posRes, ordRes] = await Promise.all([
+        futuresAPI.getPositions(),
+        futuresAPI.getOpenOrders(symbol),
+      ]);
+      const posData = (posRes as any)?.data || posRes || [];
+      const ordData = (ordRes as any)?.data || ordRes || [];
+      setPositions(Array.isArray(posData) ? posData : []);
+      setOpenOrders(Array.isArray(ordData) ? ordData : []);
+    } catch(e) {}
+    setLoading(false);
+  }, [symbol]);
+
+  const fetchHistory = useCallback(async () => {
+    try {
+      const res = await futuresAPI.getOrderHistory(symbol);
+      const data = (res as any)?.data || res || [];
+      setHistory(Array.isArray(data) ? data.slice(0,20) : []);
+    } catch(e) {}
+  }, [symbol]);
+
+  useEffect(() => { fetchData(); }, [fetchData, refresh]);
+  useEffect(() => { if (active === 'history') fetchHistory(); }, [active, fetchHistory]);
+
+  // Auto refresh PnL every 1s
+  useEffect(() => {
+    const t = setInterval(fetchData, 1000);
+    return () => clearInterval(t);
+  }, [fetchData]);
+
+  const filteredPositions = showCurrent && symbol
+    ? positions.filter(p => p.symbol === symbol)
+    : positions;
+
+  const filteredOrders = showCurrent && symbol
+    ? openOrders.filter(o => o.symbol === symbol)
+    : openOrders;
+
+  const handleClose = async (pos: any, qty?: string) => {
+    setClosingId(pos.id);
+    try {
+      const body = qty ? { close_qty: parseFloat(qty) } : {};
+      await futuresAPI.closePosition(parseInt(pos.id), body);
+      setShowClose(null);
+      setCloseQty('');
+      await fetchData();
+      onRefresh?.();
+    } catch(e: any) {
+      alert(e?.message || 'Close failed');
+    } finally {
+      setClosingId(null);
+    }
+  };
+
+  const handleCancel = async (orderId: number) => {
+    setCancellingId(orderId);
+    try {
+      await futuresAPI.cancelOrder(orderId);
+      await fetchData();
+    } catch(e: any) {
+      alert(e?.message || 'Cancel failed');
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
+  const pnlColor = (pnl: number) =>
+    pnl > 0 ? 'var(--color-success)' : pnl < 0 ? 'var(--color-danger)' : 'var(--color-muted)';
+
+  const statusColor = (s: string) =>
+    s === 'filled' ? 'var(--color-success)'
+    : s === 'cancelled' ? 'var(--color-danger)'
+    : 'var(--color-muted)';
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden',
-                  borderTop: '1px solid var(--color-border)', height: '100%' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%',
+                  borderTop: '1px solid var(--color-border)' }}>
 
-      {/* Tabs row */}
+      {/* Tabs */}
       <div style={{ display: 'flex', alignItems: 'center', flexShrink: 0,
                     background: 'var(--color-surface)',
                     borderBottom: '1px solid var(--color-border)' }}>
-        {TABS.map(({ key, label }) => (
-          <button key={key} onClick={() => setActive(key)} style={{
-            padding: '8px 10px', background: 'none', border: 'none', cursor: 'pointer',
-            fontSize: 12, fontWeight: active === key ? 600 : 400,
-            color: active === key ? 'var(--color-text)' : 'var(--color-muted)',
-            borderBottom: active === key
-              ? '2px solid var(--color-primary)' : '2px solid transparent',
-            whiteSpace: 'nowrap'
-          }}>
-            {label}{(key === 'positions' || key === 'orders') ? ' (0)' : ''}
-          </button>
-        ))}
-
-        {/* History icon */}
+        {TABS.map(({ key, label }) => {
+          const count = key === 'positions' ? filteredPositions.length
+                      : key === 'orders'    ? filteredOrders.length : null;
+          return (
+            <button key={key} onClick={() => setActive(key)} style={{
+              padding: '8px 10px', background: 'none', border: 'none', cursor: 'pointer',
+              fontSize: 12, fontWeight: active === key ? 600 : 400,
+              color: active === key ? 'var(--color-text)' : 'var(--color-muted)',
+              borderBottom: active === key ? '2px solid var(--color-primary)' : '2px solid transparent',
+              whiteSpace: 'nowrap'
+            }}>
+              {label}{count !== null ? ` (${count})` : ''}
+            </button>
+          );
+        })}
         <button style={{ marginLeft: 'auto', padding: '8px 10px', background: 'none',
-                         border: 'none', cursor: 'pointer', color: 'var(--color-muted)' }}>
+                         border: 'none', cursor: 'pointer', color: 'var(--color-muted)' }}
+          onClick={fetchData}>
           <ClipboardList size={16} />
         </button>
       </div>
 
-      {/* Show current + Close all — only for positions/orders */}
+      {/* Filter row */}
       {(active === 'positions' || active === 'orders') && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10,
                       padding: '6px 12px', flexShrink: 0,
@@ -52,23 +145,251 @@ export default function FuturesPositions() {
               style={{ accentColor: 'var(--color-primary)' }} />
             Show current
           </label>
-          <button style={{ marginLeft: 'auto', padding: '4px 12px', borderRadius: 6,
-                           fontSize: 11, fontWeight: 600,
-                           border: '1px solid var(--color-border)',
-                           background: 'var(--color-surface2)',
-                           color: 'var(--color-text)', cursor: 'pointer' }}>
-            Close all
-          </button>
+          {active === 'positions' && positions.length > 0 && (
+            <button onClick={() => positions.forEach(p => handleClose(p))}
+              style={{ marginLeft: 'auto', padding: '4px 12px', borderRadius: 6,
+                       fontSize: 11, fontWeight: 600,
+                       border: '1px solid var(--color-border)',
+                       background: 'var(--color-surface2)',
+                       color: 'var(--color-danger)', cursor: 'pointer' }}>
+              Close all
+            </button>
+          )}
         </div>
       )}
 
-      {/* Empty state */}
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column',
-                    alignItems: 'center', justifyContent: 'center',
-                    color: 'var(--color-muted)', fontSize: 13 }}>
-        <div style={{ fontSize: 28, marginBottom: 8 }}>📋</div>
-        <div>No {active}</div>
+      {/* Content */}
+      <div style={{ flex: 1, overflow: 'auto' }}>
+
+        {/* POSITIONS */}
+        {active === 'positions' && (
+          loading && positions.length === 0
+          ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--color-muted)', fontSize: 12 }}>Loading...</div>
+          : filteredPositions.length === 0
+          ? <div style={{ flex: 1, display: 'flex', flexDirection: 'column',
+                          alignItems: 'center', justifyContent: 'center',
+                          color: 'var(--color-muted)', fontSize: 12, padding: 20 }}>
+              <div style={{ fontSize: 24, marginBottom: 6 }}>📋</div>
+              <div>No open positions</div>
+            </div>
+          : <div>
+              {filteredPositions.map((pos: any) => {
+                const pnl     = parseFloat(pos.unrealizedPnl || pos.unrealized_pnl || 0);
+                const roe     = parseFloat(pos.roe || 0);
+                const entry   = parseFloat(pos.entryPrice || pos.entry_price || 0);
+                const mark    = parseFloat(pos.markPrice  || pos.mark_price  || 0);
+                const liq     = parseFloat(pos.liquidationPrice || pos.liquidation_price || 0);
+                const margin  = parseFloat(pos.margin || 0);
+                const qty     = parseFloat(pos.quantity || 0);
+                const isLong  = pos.side === 'long';
+                return (
+                  <div key={pos.id} style={{ padding: '10px 12px',
+                                              borderBottom: '1px solid var(--color-border)' }}>
+                    {/* Header row */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span style={{ fontWeight: 700, fontSize: 13 }}>{pos.symbol}</span>
+                        <span style={{ fontSize: 10, padding: '2px 6px', borderRadius: 4,
+                                       background: isLong ? 'rgba(14,203,129,0.15)' : 'rgba(246,70,93,0.15)',
+                                       color: isLong ? 'var(--color-success)' : 'var(--color-danger)',
+                                       fontWeight: 600 }}>
+                          {isLong ? 'Long' : 'Short'} {pos.leverage}x
+                        </span>
+                        <span style={{ fontSize: 10, color: 'var(--color-muted)' }}>
+                          {pos.marginType || pos.margin_type}
+                        </span>
+                      </div>
+                      <button onClick={() => { setShowClose(pos); setCloseQty(qty.toString()); }}
+                        style={{ padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                                 border: '1px solid var(--color-border)',
+                                 background: 'var(--color-surface2)',
+                                 color: 'var(--color-text)', cursor: 'pointer' }}>
+                        Close
+                      </button>
+                    </div>
+                    {/* PnL row */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                      <div>
+                        <div style={{ fontSize: 10, color: 'var(--color-muted)' }}>PnL (USDT)</div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: pnlColor(pnl) }}>
+                          {pnl >= 0 ? '+' : ''}{pnl.toFixed(4)}
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'right' }}>
+                        <div style={{ fontSize: 10, color: 'var(--color-muted)' }}>ROI</div>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: pnlColor(roe) }}>
+                          {roe >= 0 ? '+' : ''}{roe.toFixed(2)}%
+                        </div>
+                      </div>
+                    </div>
+                    {/* Details grid */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
+                                  gap: '4px 8px', fontSize: 10 }}>
+                      {[
+                        ['Size', `${qty} ${pos.symbol?.replace('USDT','')||''}`],
+                        ['Margin', `${margin.toFixed(4)}`],
+                        ['Entry', entry.toFixed(2)],
+                        ['Mark',  mark.toFixed(2)],
+                        ['Liq.',  liq.toFixed(2)],
+                        ['TP/SL', pos.takeProfit || pos.take_profit
+                          ? `${parseFloat(pos.takeProfit||pos.take_profit||0).toFixed(2)} / ${parseFloat(pos.stopLoss||pos.stop_loss||0).toFixed(2)}`
+                          : '--'],
+                      ].map(([label, val]) => (
+                        <div key={label}>
+                          <div style={{ color: 'var(--color-muted)' }}>{label}</div>
+                          <div style={{ color: 'var(--color-text)', fontWeight: 500 }}>{val}</div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+        )}
+
+        {/* OPEN ORDERS */}
+        {active === 'orders' && (
+          filteredOrders.length === 0
+          ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--color-muted)', fontSize: 12 }}>
+              <div style={{ fontSize: 24, marginBottom: 6 }}>📋</div>
+              <div>No open orders</div>
+            </div>
+          : <div>
+              {filteredOrders.map((ord: any) => (
+                <div key={ord.id} style={{ padding: '8px 12px',
+                                           borderBottom: '1px solid var(--color-border)' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span style={{ fontWeight: 600, fontSize: 12 }}>{ord.symbol}</span>
+                      <span style={{ fontSize: 10, padding: '2px 5px', borderRadius: 4,
+                                     background: ord.side === 'buy' ? 'rgba(14,203,129,0.15)' : 'rgba(246,70,93,0.15)',
+                                     color: ord.side === 'buy' ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                        {ord.side?.toUpperCase()} {ord.order_type?.toUpperCase()}
+                      </span>
+                    </div>
+                    <button onClick={() => handleCancel(parseInt(ord.id))}
+                      disabled={cancellingId === parseInt(ord.id)}
+                      style={{ padding: '2px 8px', borderRadius: 5, fontSize: 10,
+                               border: '1px solid var(--color-danger)',
+                               background: 'transparent', color: 'var(--color-danger)',
+                               cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3 }}>
+                      <X size={10} />
+                      {cancellingId === parseInt(ord.id) ? '...' : 'Cancel'}
+                    </button>
+                  </div>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
+                                gap: '3px 8px', fontSize: 10 }}>
+                    {[
+                      ['Qty',    parseFloat(ord.quantity||0).toFixed(4)],
+                      ['Price',  ord.price ? parseFloat(ord.price).toFixed(2) : 'Market'],
+                      ['Margin', parseFloat(ord.margin_used||0).toFixed(4)],
+                      ['Lev.',   `${ord.leverage}x`],
+                      ['TP',     ord.take_profit ? parseFloat(ord.take_profit).toFixed(2) : '--'],
+                      ['SL',     ord.stop_loss   ? parseFloat(ord.stop_loss).toFixed(2)   : '--'],
+                    ].map(([l,v]) => (
+                      <div key={l}>
+                        <div style={{ color: 'var(--color-muted)' }}>{l}</div>
+                        <div style={{ color: 'var(--color-text)' }}>{v}</div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+        )}
+
+        {/* HISTORY */}
+        {active === 'history' && (
+          history.length === 0
+          ? <div style={{ padding: 20, textAlign: 'center', color: 'var(--color-muted)', fontSize: 12 }}>
+              No history
+            </div>
+          : <div>
+              {history.map((ord: any) => (
+                <div key={ord.id} style={{ padding: '6px 12px',
+                                           borderBottom: '1px solid var(--color-border)',
+                                           display: 'flex', justifyContent: 'space-between',
+                                           alignItems: 'center' }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginBottom: 2 }}>
+                      <span style={{ fontSize: 11, fontWeight: 600 }}>{ord.symbol}</span>
+                      <span style={{ fontSize: 10,
+                                     color: ord.side === 'buy' ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                        {ord.side?.toUpperCase()}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: 10, color: 'var(--color-muted)' }}>
+                      {ord.order_type} · {parseFloat(ord.quantity||0).toFixed(4)}
+                      {ord.avg_fill_price ? ` @ ${parseFloat(ord.avg_fill_price).toFixed(2)}` : ''}
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right' }}>
+                    <div style={{ fontSize: 10, fontWeight: 600,
+                                  color: statusColor(ord.status) }}>
+                      {ord.status?.toUpperCase()}
+                    </div>
+                    {ord.fee && (
+                      <div style={{ fontSize: 10, color: 'var(--color-muted)' }}>
+                        Fee: {parseFloat(ord.fee).toFixed(4)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+        )}
       </div>
+
+      {/* Close position modal */}
+      {showClose && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+                      zIndex: 300, display: 'flex', alignItems: 'flex-end',
+                      justifyContent: 'center' }}
+          onClick={() => setShowClose(null)}>
+          <div style={{ background: 'var(--color-surface)', borderRadius: '16px 16px 0 0',
+                        padding: '20px', width: '100%', maxWidth: 480 }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 12 }}>
+              Close {showClose.symbol} {showClose.side}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--color-muted)', marginBottom: 8 }}>
+              Position: {parseFloat(showClose.quantity||0).toFixed(4)} | Margin: {parseFloat(showClose.margin||0).toFixed(4)} USDT
+            </div>
+            <div style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 11, color: 'var(--color-muted)', marginBottom: 4 }}>Close Quantity</div>
+              <input value={closeQty} onChange={e => setCloseQty(e.target.value)}
+                type="number" max={showClose.quantity} step="0.001"
+                style={{ width: '100%', padding: '10px', borderRadius: 8, fontSize: 13,
+                         border: '1px solid var(--color-border)',
+                         background: 'var(--color-surface2)', color: 'var(--color-text)',
+                         outline: 'none', boxSizing: 'border-box' as any }} />
+              <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                {[25,50,75,100].map(p => (
+                  <button key={p} onClick={() => setCloseQty((parseFloat(showClose.quantity||0) * p / 100).toFixed(4))}
+                    style={{ flex: 1, padding: '6px', borderRadius: 6, fontSize: 11,
+                             border: '1px solid var(--color-border)',
+                             background: 'var(--color-surface2)', color: 'var(--color-text)',
+                             cursor: 'pointer' }}>{p}%</button>
+                ))}
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setShowClose(null)}
+                style={{ flex: 1, padding: '12px', borderRadius: 10,
+                         border: '1px solid var(--color-border)',
+                         background: 'transparent', color: 'var(--color-text)',
+                         fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+              <button onClick={() => handleClose(showClose, closeQty)}
+                disabled={closingId === parseInt(showClose.id)}
+                style={{ flex: 1, padding: '12px', borderRadius: 10, border: 'none',
+                         background: showClose.side === 'long' ? 'var(--color-danger)' : 'var(--color-success)',
+                         color: '#fff', fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
+                {closingId === parseInt(showClose.id) ? 'Closing...' : 'Confirm Close'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
