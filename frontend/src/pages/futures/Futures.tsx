@@ -37,6 +37,7 @@ export default function Futures() {
   const [countdown, setCountdown]     = useState('');
   const [available, setAvailable]     = useState(0);
   const [markPrice, setMarkPrice]     = useState(0);
+  const [isCustomPair, setIsCustomPair] = useState(false);
 
   const [price, setPrice]               = useState('');
   const [amount, setAmount]             = useState('');
