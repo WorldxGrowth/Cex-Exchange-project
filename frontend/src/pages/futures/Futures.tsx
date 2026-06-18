@@ -121,6 +121,12 @@ export default function Futures() {
   }, [sym]);
 
   const fetchMarkPrice = useCallback(() => {
+    // VDC and custom tokens are not on Binance — use spot price from store
+    const customSyms = ['VDCUSDT'];
+    if (customSyms.includes(sym)) {
+      // Use spot price from price store for custom tokens
+      return;
+    }
     fetch(`https://fapi.binance.com/fapi/v1/premiumIndex?symbol=${sym}`)
       .then(r => r.json())
       .then((d: any) => { const mp = parseFloat(d?.markPrice||'0'); if (mp>0) setMarkPrice(mp); })

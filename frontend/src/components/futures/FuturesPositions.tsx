@@ -25,6 +25,10 @@ export default function FuturesPositions({ symbol, refresh = 0, onRefresh }: Pro
   const [cancellingId, setCancellingId] = useState<number|null>(null);
   const [showClose, setShowClose]     = useState<any>(null);
   const [closeQty, setCloseQty]       = useState('');
+  const [showTpSl, setShowTpSl]       = useState<any>(null);
+  const [tpInput, setTpInput]         = useState('');
+  const [slInput, setSlInput]         = useState('');
+  const [savingTpSl, setSavingTpSl]   = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -92,6 +96,20 @@ export default function FuturesPositions({ symbol, refresh = 0, onRefresh }: Pro
     } finally {
       setCancellingId(null);
     }
+  };
+
+  const handleTpSl = async () => {
+    if (!showTpSl) return;
+    setSavingTpSl(true);
+    try {
+      await futuresAPI.updateTpSl(parseInt(showTpSl.id), {
+        take_profit: tpInput || null,
+        stop_loss:   slInput || null,
+      });
+      setShowTpSl(null); setTpInput(''); setSlInput('');
+      await fetchData();
+    } catch(e: any) { alert(e?.message || 'Failed to update TP/SL'); }
+    finally { setSavingTpSl(false); }
   };
 
   const pnlColor = (pnl: number) =>
@@ -231,15 +249,30 @@ export default function FuturesPositions({ symbol, refresh = 0, onRefresh }: Pro
                         ['Entry', entry.toFixed(2)],
                         ['Mark',  mark.toFixed(2)],
                         ['Liq.',  liq.toFixed(2)],
-                        ['TP/SL', pos.takeProfit || pos.take_profit
-                          ? `${parseFloat(pos.takeProfit||pos.take_profit||0).toFixed(2)} / ${parseFloat(pos.stopLoss||pos.stop_loss||0).toFixed(2)}`
-                          : '--'],
                       ].map(([label, val]) => (
                         <div key={label}>
                           <div style={{ color: 'var(--color-muted)' }}>{label}</div>
                           <div style={{ color: 'var(--color-text)', fontWeight: 500 }}>{val}</div>
                         </div>
                       ))}
+                      {/* TP/SL with pencil edit icon */}
+                      <div>
+                        <div style={{ color: 'var(--color-muted)' }}>TP/SL</div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}
+                          onClick={() => {
+                            setShowTpSl(pos);
+                            setTpInput(String(pos.takeProfit || pos.take_profit || ''));
+                            setSlInput(String(pos.stopLoss  || pos.stop_loss  || ''));
+                          }}>
+                          <span style={{ color: 'var(--color-text)', fontWeight: 500 }}>
+                            {(pos.takeProfit||pos.take_profit)
+                              ? `${parseFloat(pos.takeProfit||pos.take_profit||0).toFixed(2)} / ${parseFloat(pos.stopLoss||pos.stop_loss||0).toFixed(2)}`
+                              : '--'}
+                          </span>
+                          <span style={{ cursor: 'pointer', color: 'var(--color-primary)',
+                                         fontSize: 11, lineHeight: 1 }}>✏️</span>
+                        </div>
+                      </div>
                     </div>
                   </div>
                 );
@@ -339,6 +372,111 @@ export default function FuturesPositions({ symbol, refresh = 0, onRefresh }: Pro
             </div>
         )}
       </div>
+
+      {/* TP/SL Modal */}
+      {showTpSl && (() => {
+        const _entry  = parseFloat(showTpSl.entryPrice||showTpSl.entry_price||0);
+        const _qty    = parseFloat(showTpSl.quantity||0);
+        const _lev    = parseFloat(showTpSl.leverage||1);
+        const _margin = parseFloat(showTpSl.margin||0);
+        const _isLong = showTpSl.side === 'long';
+        const calcPnl = (price: string) => {
+          if (!price || !_entry) return null;
+          const p = parseFloat(price);
+          const pnl = _isLong ? (p - _entry) * _qty : (_entry - p) * _qty;
+          const roi = _margin > 0 ? (pnl / _margin) * 100 : 0;
+          return { pnl, roi };
+        };
+        const tpCalc = calcPnl(tpInput);
+        const slCalc = calcPnl(slInput);
+        return (
+          <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+                        zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            onClick={() => setShowTpSl(null)}>
+            <div style={{ background: 'var(--color-surface)', borderRadius: 16,
+                          padding: '24px', width: '90%', maxWidth: 420,
+                          border: '1px solid var(--color-border)',
+                          boxShadow: '0 24px 64px rgba(0,0,0,0.5)' }}
+              onClick={e => e.stopPropagation()}>
+              <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>
+                Set TP/SL — {showTpSl.symbol} <span style={{
+                  color: _isLong ? 'var(--color-success)' : 'var(--color-danger)'
+                }}>{showTpSl.side}</span>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--color-muted)', marginBottom: 20 }}>
+                Entry: <span style={{ color: 'var(--color-text)' }}>{_entry.toFixed(4)}</span> &nbsp;|&nbsp;
+                Qty: <span style={{ color: 'var(--color-text)' }}>{_qty}</span> &nbsp;|&nbsp;
+                {_lev}x
+              </div>
+
+              {/* Take Profit */}
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-success)' }}>
+                    ✅ Take Profit
+                  </span>
+                  {tpCalc && (
+                    <span style={{ fontSize: 11, fontWeight: 600,
+                                   color: tpCalc.pnl >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                      {tpCalc.pnl >= 0 ? '+' : ''}{tpCalc.pnl.toFixed(4)} USDT &nbsp;
+                      ({tpCalc.roi >= 0 ? '+' : ''}{tpCalc.roi.toFixed(2)}%)
+                    </span>
+                  )}
+                </div>
+                <input value={tpInput} onChange={e => setTpInput(e.target.value)}
+                  type="number" placeholder="TP Price (USDT)"
+                  style={{ width: '100%', padding: '10px', borderRadius: 8, fontSize: 13,
+                           border: '1px solid rgba(14,203,129,0.4)', background: 'var(--color-surface2)',
+                           color: 'var(--color-text)', outline: 'none', boxSizing: 'border-box' as any }} />
+              </div>
+
+              {/* Stop Loss */}
+              <div style={{ marginBottom: 20 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-danger)' }}>
+                    🛑 Stop Loss
+                  </span>
+                  {slCalc && (
+                    <span style={{ fontSize: 11, fontWeight: 600,
+                                   color: slCalc.pnl >= 0 ? 'var(--color-success)' : 'var(--color-danger)' }}>
+                      {slCalc.pnl >= 0 ? '+' : ''}{slCalc.pnl.toFixed(4)} USDT &nbsp;
+                      ({slCalc.roi >= 0 ? '+' : ''}{slCalc.roi.toFixed(2)}%)
+                    </span>
+                  )}
+                </div>
+                <input value={slInput} onChange={e => setSlInput(e.target.value)}
+                  type="number" placeholder="SL Price (USDT)"
+                  style={{ width: '100%', padding: '10px', borderRadius: 8, fontSize: 13,
+                           border: '1px solid rgba(246,70,93,0.4)', background: 'var(--color-surface2)',
+                           color: 'var(--color-text)', outline: 'none', boxSizing: 'border-box' as any }} />
+              </div>
+
+              <div style={{ fontSize: 11, color: 'var(--color-muted)', marginBottom: 20,
+                            padding: '8px 12px', borderRadius: 8, background: 'var(--color-bg)' }}>
+                Mark: <span style={{ color: 'var(--color-text)' }}>
+                  {parseFloat(showTpSl.markPrice||showTpSl.mark_price||0).toFixed(4)} USDT
+                </span>
+              </div>
+
+              <div style={{ display: 'flex', gap: 10 }}>
+                <button onClick={() => { setShowTpSl(null); setTpInput(''); setSlInput(''); }}
+                  style={{ flex: 1, padding: '12px', borderRadius: 10,
+                           border: '1px solid var(--color-border)',
+                           background: 'transparent', color: 'var(--color-text)',
+                           fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+                <button onClick={handleTpSl} disabled={savingTpSl}
+                  style={{ flex: 1, padding: '12px', borderRadius: 10, border: 'none',
+                           background: savingTpSl ? 'rgba(240,185,11,0.4)' : 'var(--color-primary)',
+                           color: '#000', fontSize: 14, fontWeight: 700,
+                           cursor: savingTpSl ? 'not-allowed' : 'pointer',
+                           opacity: savingTpSl ? 0.7 : 1 }}>
+                  {savingTpSl ? '⏳ Saving...' : 'Confirm'}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Close position modal */}
       {showClose && (
