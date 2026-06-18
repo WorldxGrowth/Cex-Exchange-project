@@ -167,6 +167,14 @@ export default function Futures() {
     else setAmount(entryPrice > 0 ? ((maxNotional * amountPct / 100) / entryPrice).toFixed(4) : '0');
   }, [amountPct]);
 
+  // Check if custom pair (VDC etc) from backend
+  useEffect(() => {
+    futuresAPI.getPairInfo(sym).then((res: any) => {
+      const d = res?.data || res;
+      setIsCustomPair(d?.is_custom === true);
+    }).catch(() => setIsCustomPair(false));
+  }, [sym]);
+
   // Market ticker + Socket
   useEffect(() => {
     marketAPI.getTicker(sym).then((res: any) => {
