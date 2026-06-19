@@ -53,38 +53,15 @@ const PrivateRoute = ({ children }: { children: React.ReactNode }) => {
 };
 
 // Loading spinner component
-const LoadingScreen = () => (
-  <div style={{
-    position: 'fixed', inset: 0, zIndex: 9999,
-    background: '#0b0e11',
-    display: 'flex', flexDirection: 'column',
-    alignItems: 'center', justifyContent: 'center',
-    gap: 20
-  }}>
-    <div style={{ fontSize: 32, fontWeight: 800, color: '#f0b90b', letterSpacing: 2 }}>
-      ⚡ VDExchange
-    </div>
-    <div style={{
-      width: 40, height: 40, borderRadius: '50%',
-      border: '3px solid #2b2f36',
-      borderTop: '3px solid #f0b90b',
-      animation: 'spin 0.8s linear infinite'
-    }} />
-    <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
-  </div>
-);
-
 export default function App() {
   const { theme } = useStore();
-  const [appReady, setAppReady] = React.useState(false);
 
   useEffect(() => { document.documentElement.className = theme; }, [theme]);
-  useEffect(() => {
-    const t = setTimeout(() => setAppReady(true), 400);
-    return () => clearTimeout(t);
-  }, []);
 
-  if (!appReady) return <LoadingScreen />;
+  // Hide the instant index.html preloader once React has mounted and is ready to paint
+  useEffect(() => {
+    (window as any).__hidePreloader?.();
+  }, []);
 
   return (
     <div className={theme}>

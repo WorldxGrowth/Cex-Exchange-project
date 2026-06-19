@@ -1,86 +1,112 @@
-const hdWallet = require('../services/wallet/hdWallet');
+const walletRouter = require('../services/wallet/walletRouter');
 const db = require('../config/database');
 const { success, error } = require('../utils/response');
 
-const NETWORK_INFO = {
-  BSC:     { name: 'BNB Smart Chain', chainId: 56,     explorer: 'https://bscscan.com' },
-  ETH:     { name: 'Ethereum',        chainId: 1,      explorer: 'https://etherscan.io' },
-  VDCHAIN: { name: 'VDChain',         chainId: 882022, explorer: 'https://vdscan.io' }
-};
-
 const getDepositAddress = async (req, res) => {
   try {
-    const network = (req.query.network || 'BSC').toUpperCase();
+    const network = (req.query.network || '').toUpperCase();
     const coin    = (req.query.coin    || 'USDT').toUpperCase();
 
-    if (!NETWORK_INFO[network]) return error(res, 'Invalid network');
+    if (!network) return error(res, 'network is required');
 
-    // ── Phase 1: Coin deposit controls ────────────
-    const coinCheck = await db.query(`
-      SELECT id, symbol, name, logo_url,
-             is_deposit, maintenance_mode,
-             deposit_disabled_reason, deposit_notice,
-             deposit_enabled_at, min_deposit
-      FROM coins WHERE symbol = $1 AND is_active = true
-    `, [coin]);
+    // ── Coin + Network lookup via coin_networks (multi-chain aware) ──
+    const cnCheck = await db.query(`
+      SELECT cn.id as cn_id, cn.is_deposit_enabled, cn.min_confirmations,
+             c.id as coin_id, c.symbol, c.name, c.logo_url,
+             c.is_deposit, c.maintenance_mode,
+             c.deposit_disabled_reason, c.deposit_notice,
+             c.deposit_enabled_at, c.min_deposit,
+             n.id as network_id, n.name as network_name,
+             n.short_name, n.chain_type, n.explorer_url
+      FROM coin_networks cn
+      JOIN coins c ON c.id = cn.coin_id
+      JOIN networks n ON n.id = cn.network_id
+      WHERE c.symbol = $1 AND n.short_name = $2
+        AND c.is_active = true AND n.is_active = true
+    `, [coin, network]);
 
-    if (coinCheck.rows[0]) {
-      const c = coinCheck.rows[0];
-
-      // 1. Maintenance check
-      if (c.maintenance_mode) {
-        return error(res, c.deposit_notice || `${coin} is under maintenance. Please try later.`);
-      }
-      // 2. Deposit enabled check
-      if (!c.is_deposit) {
-        return error(res, c.deposit_disabled_reason || `Deposits are disabled for ${coin}`);
-      }
-      // 3. Scheduled deposit check (future date)
-      if (c.deposit_enabled_at && new Date(c.deposit_enabled_at) > new Date()) {
-        return error(res, c.deposit_notice || `Deposits for ${coin} will be available at ${new Date(c.deposit_enabled_at).toUTCString()}`);
-      }
+    if (!cnCheck.rows[0]) {
+      return error(res, `${coin} is not supported on ${network} network`);
     }
-    // ── End Phase 1 ───────────────────────────────
+    const c = cnCheck.rows[0];
 
-    // Address generate/fetch (existing logic - unchanged)
-    const address = await hdWallet.getOrCreateDepositAddress(req.user.id, network);
+    // Coin-level deposit controls (same checks as before, unchanged logic)
+    if (c.maintenance_mode) {
+      return error(res, c.deposit_notice || `${coin} is under maintenance. Please try later.`);
+    }
+    if (!c.is_deposit || !c.is_deposit_enabled) {
+      return error(res, c.deposit_disabled_reason || `Deposits are disabled for ${coin} on ${network}`);
+    }
+    if (c.deposit_enabled_at && new Date(c.deposit_enabled_at) > new Date()) {
+      return error(res, c.deposit_notice || `Deposits for ${coin} will be available at ${new Date(c.deposit_enabled_at).toUTCString()}`);
+    }
 
-    // Webhook register (existing logic - unchanged)
-    setImmediate(async () => {
-      try {
-        const alchemyService = require('../services/alchemyService');
-        const existing = await db.query(
-          'SELECT id FROM user_deposit_addresses WHERE user_id=$1 AND network=$2',
-          [req.user.id, network]
-        );
-        if (existing.rows.length > 0) {
-          const ok = await alchemyService.registerNewUserAddress(
-            req.user.id, network, address
+    // ── Address generate/fetch via walletRouter (multi-chain) ──
+    const address = await walletRouter.getOrCreateDepositAddress(req.user.id, network);
+
+    // ── Webhook register — EVM only for now (TRON/Solana/Bitcoin webhooks pending) ──
+    if (c.chain_type === 'evm') {
+      setImmediate(async () => {
+        try {
+          const alchemyService = require('../services/alchemyService');
+          const existing = await db.query(
+            'SELECT id FROM user_deposit_addresses WHERE user_id=$1 AND network=$2',
+            [req.user.id, network]
           );
-          if (ok) {
-            console.log(`[Deposit] ✅ Webhook registered: User ${req.user.id} ${network} ${address}`);
+          if (existing.rows.length > 0) {
+            const ok = await alchemyService.registerNewUserAddress(
+              req.user.id, network, address
+            );
+            if (ok) {
+              console.log(`[Deposit] ✅ Webhook registered: User ${req.user.id} ${network} ${address}`);
+            }
           }
+        } catch (e) {
+          console.error('[Deposit] Webhook register error (non-blocking):', e.message);
         }
-      } catch (e) {
-        console.error('[Deposit] Webhook register error (non-blocking):', e.message);
-      }
-    });
-
-    const coinInfo = coinCheck.rows[0] || null;
+      });
+    }
 
     return success(res, {
       address,
       network,
-      network_info: NETWORK_INFO[network],
-      coin: coinInfo || { symbol: coin },
-      min_deposit: coinInfo?.min_deposit || '1',
-      confirmations_required: network === 'ETH' ? 12 : 3,
+      network_info: {
+        name: c.network_name,
+        explorer: c.explorer_url
+      },
+      coin: { symbol: c.symbol, name: c.name, logo_url: c.logo_url },
+      min_deposit: c.min_deposit || '1',
+      confirmations_required: c.min_confirmations || 3,
       warning: `Only send ${coin} on ${network} network!`
     });
 
   } catch (err) {
     console.error('getDepositAddress:', err.message);
     return error(res, 'Failed to generate address', 500);
+  }
+};
+
+// ── NEW: list networks a coin actually supports (fixes the frontend bug
+//         where all networks showed regardless of coin selection) ──
+const getCoinNetworks = async (req, res) => {
+  try {
+    const coin = (req.query.coin || '').toUpperCase();
+    if (!coin) return error(res, 'coin is required');
+
+    const result = await db.query(`
+      SELECT n.short_name as network, n.name as network_name, n.chain_type,
+             cn.is_deposit_enabled, cn.is_withdraw_enabled, cn.min_confirmations
+      FROM coin_networks cn
+      JOIN coins c ON c.id = cn.coin_id
+      JOIN networks n ON n.id = cn.network_id
+      WHERE c.symbol = $1 AND c.is_active = true AND n.is_active = true
+        AND cn.is_deposit_enabled = true
+      ORDER BY n.id
+    `, [coin]);
+
+    return success(res, result.rows);
+  } catch (err) {
+    return error(res, 'Failed to fetch networks', 500);
   }
 };
 
@@ -115,4 +141,4 @@ const getDepositHistory = async (req, res) => {
   }
 };
 
-module.exports = { getDepositAddress, getDepositHistory };
+module.exports = { getDepositAddress, getDepositHistory, getCoinNetworks };
