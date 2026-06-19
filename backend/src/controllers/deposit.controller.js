@@ -83,6 +83,25 @@ const getDepositAddress = async (req, res) => {
           console.error('[Deposit] Helius register error (non-blocking):', e.message);
         }
       });
+    } else if (c.chain_type === 'bitcoin') {
+      setImmediate(async () => {
+        try {
+          const blockCypherService = require('../services/webhooks/blockCypherService');
+          const existing = await db.query(
+            'SELECT id FROM user_deposit_addresses WHERE user_id=$1 AND network=$2',
+            [req.user.id, network]
+          );
+          if (existing.rows.length > 0) {
+            const callbackUrl = `${process.env.FRONTEND_URL ? 'https://exchange.vdscan.io' : ''}/api/v1/webhook/bitcoin`;
+            const ok = await blockCypherService.registerNewUserAddress(req.user.id, address, callbackUrl);
+            if (ok) {
+              console.log(`[Deposit] ✅ BlockCypher webhook registered: User ${req.user.id} ${network} ${address}`);
+            }
+          }
+        } catch (e) {
+          console.error('[Deposit] BlockCypher register error (non-blocking):', e.message);
+        }
+      });
     }
 
     return success(res, {
