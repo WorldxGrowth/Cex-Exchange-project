@@ -2,6 +2,7 @@
  * Futures Mark Price Updater
  * Polls Binance fapi REST every 1s for accurate futures mark prices
  * (fstream.binance.com WebSocket is blocked on this server)
+ * Also updates PnL for custom (internal) pairs using spot price_feeds
  */
 const https = require('https');
 const { updatePositionsPnl } = require('./pnlCalculator');
@@ -52,8 +53,9 @@ async function pollLoop() {
   if (!isRunning) return;
   try {
     await fetchMarkPrices();
-    // Update PnL for all symbols that have open positions
     const db = require('../../../config/database');
+
+    // ── Binance pairs (BTC/ETH etc) - unchanged, real futures mark price ──
     const { rows: activePairs } = await db.query(
       `SELECT DISTINCT fp.symbol
        FROM futures_positions p
@@ -65,6 +67,26 @@ async function pollLoop() {
       if (mp) {
         await updatePositionsPnl(pair.symbol, mp).catch(() => {});
       }
+    }
+
+    // ── Custom pairs (VDC + any future custom tokens) - uses spot price_feeds ──
+    const { rows: customPairs } = await db.query(
+      `SELECT DISTINCT fp.symbol, fp.base_coin_id
+       FROM futures_positions p
+       JOIN futures_pairs fp ON fp.id = p.pair_id
+       WHERE p.status = 'open' AND fp.is_custom = true`
+    );
+    for (const pair of customPairs) {
+      try {
+        const { rows: [feed] } = await db.query(
+          `SELECT price_usdt FROM price_feeds WHERE coin_id=$1 LIMIT 1`,
+          [pair.base_coin_id]
+        );
+        const spotPrice = parseFloat(feed?.price_usdt || 0);
+        if (spotPrice > 0) {
+          await updatePositionsPnl(pair.symbol, spotPrice).catch(() => {});
+        }
+      } catch(e) {}
     }
   } catch(e) {}
   // Poll every 1s
