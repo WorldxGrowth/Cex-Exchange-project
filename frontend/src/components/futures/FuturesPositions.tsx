@@ -31,6 +31,12 @@ export default function FuturesPositions({ symbol, refresh = 0, onRefresh }: Pro
   const [tpInput, setTpInput]         = useState('');
   const [slInput, setSlInput]         = useState('');
   const [savingTpSl, setSavingTpSl]   = useState(false);
+  const [showOrderEdit, setShowOrderEdit] = useState<any>(null);
+  const [editPrice, setEditPrice]     = useState('');
+  const [editQty, setEditQty]         = useState('');
+  const [editTp, setEditTp]           = useState('');
+  const [editSl, setEditSl]           = useState('');
+  const [savingOrder, setSavingOrder] = useState(false);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -112,6 +118,22 @@ export default function FuturesPositions({ symbol, refresh = 0, onRefresh }: Pro
       await fetchData();
     } catch(e: any) { alert(e?.message || 'Failed to update TP/SL'); }
     finally { setSavingTpSl(false); }
+  };
+
+  const handleModifyOrder = async () => {
+    if (!showOrderEdit) return;
+    setSavingOrder(true);
+    try {
+      await futuresAPI.modifyOrder(parseInt(showOrderEdit.id), {
+        price: editPrice || undefined,
+        quantity: editQty || undefined,
+        take_profit: editTp || null,
+        stop_loss: editSl || null,
+      });
+      setShowOrderEdit(null);
+      await fetchData();
+    } catch(e: any) { alert(e?.message || 'Failed to modify order'); }
+    finally { setSavingOrder(false); }
   };
 
   const pnlColor = (pnl: number) =>
@@ -302,15 +324,29 @@ export default function FuturesPositions({ symbol, refresh = 0, onRefresh }: Pro
                         {ord.side?.toUpperCase()} {ord.order_type?.toUpperCase()}
                       </span>
                     </div>
-                    <button onClick={() => handleCancel(parseInt(ord.id))}
-                      disabled={cancellingId === parseInt(ord.id)}
-                      style={{ padding: '2px 8px', borderRadius: 5, fontSize: 10,
-                               border: '1px solid var(--color-danger)',
-                               background: 'transparent', color: 'var(--color-danger)',
-                               cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3 }}>
-                      <X size={10} />
-                      {cancellingId === parseInt(ord.id) ? '...' : 'Cancel'}
-                    </button>
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button onClick={() => {
+                        setShowOrderEdit(ord);
+                        setEditPrice(String(ord.price || ''));
+                        setEditQty(String(ord.quantity || ''));
+                        setEditTp(String(ord.take_profit || ''));
+                        setEditSl(String(ord.stop_loss || ''));
+                      }} style={{ padding: '2px 8px', borderRadius: 5, fontSize: 10,
+                               border: '1px solid var(--color-border)',
+                               background: 'transparent', color: 'var(--color-primary)',
+                               cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                        ✏️
+                      </button>
+                      <button onClick={() => handleCancel(parseInt(ord.id))}
+                        disabled={cancellingId === parseInt(ord.id)}
+                        style={{ padding: '2px 8px', borderRadius: 5, fontSize: 10,
+                                 border: '1px solid var(--color-danger)',
+                                 background: 'transparent', color: 'var(--color-danger)',
+                                 cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 3 }}>
+                        <X size={10} />
+                        {cancellingId === parseInt(ord.id) ? '...' : 'Cancel'}
+                      </button>
+                    </div>
                   </div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr',
                                 gap: '3px 8px', fontSize: 10 }}>
@@ -479,6 +515,80 @@ export default function FuturesPositions({ symbol, refresh = 0, onRefresh }: Pro
           </div>
         );
       })()}
+
+      {/* Order Modify Modal (price, qty, TP/SL for pending limit orders) */}
+      {showOrderEdit && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)',
+                      zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+          onClick={() => setShowOrderEdit(null)}>
+          <div style={{ background: 'var(--color-surface)', borderRadius: 16,
+                        padding: '24px', width: '90%', maxWidth: 420,
+                        border: '1px solid var(--color-border)',
+                        boxShadow: '0 24px 64px rgba(0,0,0,0.5)' }}
+            onClick={e => e.stopPropagation()}>
+            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>
+              Modify Order — {showOrderEdit.symbol} <span style={{
+                color: showOrderEdit.side === 'buy' ? 'var(--color-success)' : 'var(--color-danger)'
+              }}>{showOrderEdit.side?.toUpperCase()}</span>
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--color-muted)', marginBottom: 20 }}>
+              Limit Order &nbsp;|&nbsp; Leverage: {showOrderEdit.leverage}x
+            </div>
+
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text)', marginBottom: 6 }}>Price (USDT)</div>
+              <input value={editPrice} onChange={e => setEditPrice(e.target.value)}
+                type="number" placeholder="Price"
+                style={{ width: '100%', padding: '10px', borderRadius: 8, fontSize: 13,
+                         border: '1px solid var(--color-border)', background: 'var(--color-surface2)',
+                         color: 'var(--color-text)', outline: 'none', boxSizing: 'border-box' as any }} />
+            </div>
+
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-text)', marginBottom: 6 }}>Quantity</div>
+              <input value={editQty} onChange={e => setEditQty(e.target.value)}
+                type="number" placeholder="Quantity"
+                style={{ width: '100%', padding: '10px', borderRadius: 8, fontSize: 13,
+                         border: '1px solid var(--color-border)', background: 'var(--color-surface2)',
+                         color: 'var(--color-text)', outline: 'none', boxSizing: 'border-box' as any }} />
+            </div>
+
+            <div style={{ marginBottom: 14 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-success)', marginBottom: 6 }}>✅ Take Profit</div>
+              <input value={editTp} onChange={e => setEditTp(e.target.value)}
+                type="number" placeholder="TP Price (optional)"
+                style={{ width: '100%', padding: '10px', borderRadius: 8, fontSize: 13,
+                         border: '1px solid rgba(14,203,129,0.4)', background: 'var(--color-surface2)',
+                         color: 'var(--color-text)', outline: 'none', boxSizing: 'border-box' as any }} />
+            </div>
+
+            <div style={{ marginBottom: 20 }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--color-danger)', marginBottom: 6 }}>🛑 Stop Loss</div>
+              <input value={editSl} onChange={e => setEditSl(e.target.value)}
+                type="number" placeholder="SL Price (optional)"
+                style={{ width: '100%', padding: '10px', borderRadius: 8, fontSize: 13,
+                         border: '1px solid rgba(246,70,93,0.4)', background: 'var(--color-surface2)',
+                         color: 'var(--color-text)', outline: 'none', boxSizing: 'border-box' as any }} />
+            </div>
+
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setShowOrderEdit(null)}
+                style={{ flex: 1, padding: '12px', borderRadius: 10,
+                         border: '1px solid var(--color-border)',
+                         background: 'transparent', color: 'var(--color-text)',
+                         fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>Cancel</button>
+              <button onClick={handleModifyOrder} disabled={savingOrder}
+                style={{ flex: 1, padding: '12px', borderRadius: 10, border: 'none',
+                         background: savingOrder ? 'rgba(240,185,11,0.4)' : 'var(--color-primary)',
+                         color: '#000', fontSize: 14, fontWeight: 700,
+                         cursor: savingOrder ? 'not-allowed' : 'pointer',
+                         opacity: savingOrder ? 0.7 : 1 }}>
+                {savingOrder ? '⏳ Saving...' : 'Confirm'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Close position modal */}
       {showClose && (

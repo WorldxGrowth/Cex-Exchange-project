@@ -562,10 +562,10 @@ async function modifyOrder(req, res) {
   try {
     const userId  = req.user.id;
     const orderId = parseInt(req.params.order_id);
-    const { price, quantity } = req.body;
+    const { price, quantity, take_profit, stop_loss } = req.body;
 
-    if (!price && !quantity) {
-      return error(res, 'price or quantity required', 400);
+    if (!price && !quantity && take_profit === undefined && stop_loss === undefined) {
+      return error(res, 'price, quantity, take_profit or stop_loss required', 400);
     }
 
     const { rows: [order] } = await db.query(
@@ -582,9 +582,21 @@ async function modifyOrder(req, res) {
 
     const newPrice = parseFloat(price || order.price);
     const newQty   = parseFloat(quantity || order.quantity);
+    const newTp    = take_profit !== undefined ? (take_profit ? parseFloat(take_profit) : null) : order.take_profit;
+    const newSl    = stop_loss   !== undefined ? (stop_loss   ? parseFloat(stop_loss)   : null) : order.stop_loss;
 
-    if (!order.is_custom) {
-      // Binance modify
+    if (newTp !== null || newSl !== null) {
+      if (order.side === 'buy') {
+        if (newTp && newTp <= newPrice) return error(res, `TP must be above order price (${newPrice})`, 400);
+        if (newSl && newSl >= newPrice) return error(res, `SL must be below order price (${newPrice})`, 400);
+      } else {
+        if (newTp && newTp >= newPrice) return error(res, `TP must be below order price (${newPrice})`, 400);
+        if (newSl && newSl <= newPrice) return error(res, `SL must be above order price (${newPrice})`, 400);
+      }
+    }
+
+    if (!order.is_custom && (price || quantity)) {
+      // Binance modify (price/qty only)
       const { getFuturesBinanceAdapter } = require('../services/futures/binance/futuresBinanceAdapter');
       const adapter = await getFuturesBinanceAdapter();
       await adapter.modifyOrder(
@@ -597,17 +609,19 @@ async function modifyOrder(req, res) {
       );
     }
 
-    // Update DB
+    // Update DB (price, qty, TP, SL together)
     await db.query(
-      `UPDATE futures_orders SET price=$1, quantity=$2, updated_at=NOW() WHERE id=$3`,
-      [newPrice, newQty, orderId]
+      `UPDATE futures_orders SET price=$1, quantity=$2, take_profit=$3, stop_loss=$4, updated_at=NOW() WHERE id=$5`,
+      [newPrice, newQty, newTp, newSl, orderId]
     );
 
     return success(res, {
-      order_id: orderId,
-      price:    newPrice,
-      quantity: newQty,
-      status:   'modified',
+      order_id:    orderId,
+      price:       newPrice,
+      quantity:    newQty,
+      take_profit: newTp,
+      stop_loss:   newSl,
+      status:      'modified',
     });
   } catch(err) {
     return error(res, err.message);
