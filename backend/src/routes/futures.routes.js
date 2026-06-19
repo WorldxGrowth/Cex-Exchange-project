@@ -1,6 +1,7 @@
 const express = require('express');
 const router  = express.Router();
 const ctrl    = require('../controllers/futures.controller');
+const db      = require('../config/database');
 const { authenticate } = require('../middleware/auth.middleware');
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 
@@ -68,6 +69,30 @@ router.get('/pairs',              ctrl.getFuturesPairs);
 router.get('/pairs/:symbol',      ctrl.getFuturesPairInfo);
 router.get('/funding-rates',      ctrl.getFundingRateHistory);
 router.get('/calculate-cost',     ctrl.calculateOrderCost);
+router.get('/image-proxy', async (req, res) => {
+  try {
+    const axios = require('axios');
+    const url = req.query.url;
+    if (!url) return res.status(400).send('url required');
+    const r = await axios.get(url, { responseType: 'arraybuffer', timeout: 8000 });
+    res.set('Content-Type', r.headers['content-type'] || 'image/png');
+    res.set('Access-Control-Allow-Origin', '*');
+    res.set('Cache-Control', 'public, max-age=86400');
+    res.send(r.data);
+  } catch(e) {
+    res.status(404).send('Image not found');
+  }
+});
+router.get('/share-templates', async (req, res) => {
+  try {
+    const { rows } = await db.query(
+      `SELECT id, name, image_url FROM share_card_templates WHERE is_active=true ORDER BY sort_order ASC, id ASC`
+    );
+    res.json({ status: '1', message: 'Success', data: rows });
+  } catch(e) {
+    res.json({ status: '0', message: e.message, data: [] });
+  }
+});
 
 // ── Auth required ─────────────────────────────────────────────
 router.use(authenticate);

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ClipboardList, X, ChevronDown } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
+import ShareCardModal from './ShareCardModal';
 import { futuresAPI } from '../../services/api';
 
 interface Props {
@@ -37,6 +38,7 @@ export default function FuturesPositions({ symbol, refresh = 0, onRefresh }: Pro
   const [editTp, setEditTp]           = useState('');
   const [editSl, setEditSl]           = useState('');
   const [savingOrder, setSavingOrder] = useState(false);
+  const [showShare, setShowShare]     = useState<any>(null);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -241,13 +243,24 @@ export default function FuturesPositions({ symbol, refresh = 0, onRefresh }: Pro
                           {pos.marginType || pos.margin_type}
                         </span>
                       </div>
-                      <button onClick={() => { setShowClose(pos); setCloseQty(qty.toString()); }}
-                        style={{ padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                      <div style={{ display: 'flex', gap: 6 }}>
+                        <button onClick={() => setShowShare({
+                          symbol: pos.symbol, side: pos.side, leverage: pos.leverage,
+                          pnl, roi: roe, entryPrice: entry, markPrice: mark,
+                        })} style={{ padding: '3px 8px', borderRadius: 6, fontSize: 11,
                                  border: '1px solid var(--color-border)',
                                  background: 'var(--color-surface2)',
                                  color: 'var(--color-text)', cursor: 'pointer' }}>
-                        Close
-                      </button>
+                          📤
+                        </button>
+                        <button onClick={() => { setShowClose(pos); setCloseQty(qty.toString()); }}
+                          style={{ padding: '3px 10px', borderRadius: 6, fontSize: 11, fontWeight: 600,
+                                 border: '1px solid var(--color-border)',
+                                 background: 'var(--color-surface2)',
+                                 color: 'var(--color-text)', cursor: 'pointer' }}>
+                          Close
+                        </button>
+                      </div>
                     </div>
                     {/* PnL row */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
@@ -515,6 +528,11 @@ export default function FuturesPositions({ symbol, refresh = 0, onRefresh }: Pro
           </div>
         );
       })()}
+
+      {/* Share PnL Card Modal */}
+      {showShare && (
+        <ShareCardModal data={showShare} onClose={() => setShowShare(null)} />
+      )}
 
       {/* Order Modify Modal (price, qty, TP/SL for pending limit orders) */}
       {showOrderEdit && (

@@ -16,6 +16,7 @@
     "clsx": "^2.1.1",
     "country-state-city": "^3.2.1",
     "dayjs": "^1.11.21",
+    "html2canvas": "^1.4.1",
     "html5-qrcode": "^2.3.8",
     "lightweight-charts": "^5.2.0",
     "lucide-react": "^1.16.0",

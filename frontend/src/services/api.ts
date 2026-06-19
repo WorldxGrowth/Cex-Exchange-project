@@ -166,6 +166,7 @@ export const futuresAPI = {
   getOrderDetail: (id: number) => api.get(`/futures/orders/${id}`),
   getTransactions: (params?: any) => api.get('/futures/transactions', { params }),
   getFundingFeeHistory: (params?: any) => api.get('/futures/funding-fee', { params }),
+  getShareTemplates: () => api.get('/futures/share-templates'),
 
   // Trades & Liquidations
   getTrades:       (symbol?: string) =>

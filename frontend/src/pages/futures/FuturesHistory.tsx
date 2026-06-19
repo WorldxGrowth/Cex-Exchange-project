@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Download, MoreHorizontal, Filter, ChevronRight } from 'lucide-react';
 import { futuresAPI } from '../../services/api';
+import ShareCardModal from '../../components/futures/ShareCardModal';
 
 const TOP_TABS = [
   { key: 'open',     label: 'Open Orders' },
@@ -42,7 +43,7 @@ function FilterSheet({ title, options, value, onSelect, onClose }: any) {
         ))}
       </div>
     </div>
-  );
+    );
 }
 
 function FilterBar({ filters }: { filters: { key: string; label: string; value: string; options: string[]; onChange: (v: string) => void }[] }) {
@@ -100,6 +101,7 @@ export default function FuturesHistory() {
   const [posMode, setPosMode]     = useState('All');
   const [posStatus, setPosStatus] = useState('All');
   const [dateRange, setDateRange] = useState('Last 30 days');
+  const [showShare, setShowShare] = useState<any>(null);
 
   const buildParams = () => {
     const p: any = { limit: 50 };
@@ -164,6 +166,7 @@ export default function FuturesHistory() {
   );
 
   return (
+    <>
     <div style={{ minHeight: '100vh', background: 'var(--color-bg)', maxWidth: 600, margin: '0 auto' }}>
       {/* Header */}
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -308,9 +311,24 @@ export default function FuturesHistory() {
                       Isolated {p.leverage}x
                     </span>
                   </span>
-                  <span style={{ fontSize: 12, fontWeight: 600, color: p.status==='liquidated'?'var(--color-danger)':'var(--color-muted)' }}>
-                    {p.status?.charAt(0).toUpperCase()+p.status?.slice(1)}
-                  </span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <span style={{ fontSize: 12, fontWeight: 600, color: p.status==='liquidated'?'var(--color-danger)':'var(--color-muted)' }}>
+                      {p.status?.charAt(0).toUpperCase()+p.status?.slice(1)}
+                    </span>
+                    <button onClick={(e) => {
+                      e.stopPropagation();
+                      setShowShare({
+                        symbol: p.symbol, side: p.side, leverage: p.leverage,
+                        pnl, roi, entryPrice: parseFloat(p.entry_price||0),
+                        markPrice: parseFloat(p.mark_price||0), closedAt: p.closed_at,
+                      });
+                    }} style={{ padding: '3px 8px', borderRadius: 6, fontSize: 11,
+                             border: '1px solid var(--color-border)',
+                             background: 'var(--color-surface2)',
+                             color: 'var(--color-text)', cursor: 'pointer' }}>
+                      📤
+                    </button>
+                  </div>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
                   <div>
@@ -422,5 +440,10 @@ export default function FuturesHistory() {
         )}
       </div>
     </div>
-  );
+
+    {showShare && (
+      <ShareCardModal data={showShare} onClose={() => setShowShare(null)} />
+    )}
+    </>
+);
 }
