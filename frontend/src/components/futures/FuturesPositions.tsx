@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { ClipboardList, X, ChevronDown } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 import { futuresAPI } from '../../services/api';
 
 interface Props {
@@ -15,6 +16,7 @@ const TABS = [
 ];
 
 export default function FuturesPositions({ symbol, refresh = 0, onRefresh }: Props) {
+  const navigate = useNavigate();
   const [active, setActive]           = useState('positions');
   const [showCurrent, setShowCurrent] = useState(false);
   const [positions, setPositions]     = useState<any[]>([]);
@@ -145,7 +147,7 @@ export default function FuturesPositions({ symbol, refresh = 0, onRefresh }: Pro
         })}
         <button style={{ marginLeft: 'auto', padding: '8px 10px', background: 'none',
                          border: 'none', cursor: 'pointer', color: 'var(--color-muted)' }}
-          onClick={fetchData}>
+          onClick={() => navigate('/futures-history')}>
           <ClipboardList size={16} />
         </button>
       </div>

@@ -32,6 +32,8 @@ import DepositHistory from './pages/assets/DepositHistory';
 import DepositDetail from './pages/assets/DepositDetail';
 import WithdrawDetail from './pages/assets/WithdrawDetail';
 import Futures from './pages/futures/Futures';
+import FuturesHistory from './pages/futures/FuturesHistory';
+import FuturesOrderDetail from './pages/futures/FuturesOrderDetail';
 import Landing from './pages/landing/Landing';
 import CmsPage from './pages/cms/CmsPage';
 import Notifications from './pages/notifications/Notifications';
@@ -120,6 +122,8 @@ export default function App() {
             <Route path="orders"           element={<Orders />} />
             <Route path="futures"          element={<Futures />} />
             <Route path="futures/:symbol"  element={<Futures />} />
+            <Route path="futures-history"  element={<FuturesHistory />} />
+            <Route path="futures-order/:id" element={<FuturesOrderDetail />} />
             <Route path="deposit-history"  element={<DepositHistory />} />
             <Route path="deposit-detail/:id" element={<DepositDetail />} />
             <Route path="withdraw-detail/:id" element={<WithdrawDetail />} />

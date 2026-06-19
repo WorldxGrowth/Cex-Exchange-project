@@ -162,6 +162,10 @@ export const futuresAPI = {
   getPositions:  ()                    => api.get('/futures/positions'),
   closePosition: (id: number, d?: any) => api.post(`/futures/positions/${id}/close`, d || {}),
   updateTpSl:    (id: number, d: any)  => api.put(`/futures/positions/${id}/tpsl`, d),
+  getPositionHistory: (params?: any) => api.get('/futures/positions/history', { params }),
+  getOrderDetail: (id: number) => api.get(`/futures/orders/${id}`),
+  getTransactions: (params?: any) => api.get('/futures/transactions', { params }),
+  getFundingFeeHistory: (params?: any) => api.get('/futures/funding-fee', { params }),
 
   // Trades & Liquidations
   getTrades:       (symbol?: string) =>

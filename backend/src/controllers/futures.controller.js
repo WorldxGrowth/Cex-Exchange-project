@@ -687,6 +687,89 @@ async function updatePositionTpSl(req, res) {
   }
 }
 
+// ── Position History (closed/liquidated) ──────────────────────
+async function getPositionHistory(req, res) {
+  try {
+    const userId = req.user.id;
+    const { symbol, status, limit = 50, offset = 0 } = req.query;
+    let query = `SELECT p.*, fp.is_custom FROM futures_positions p
+                 JOIN futures_pairs fp ON fp.id = p.pair_id
+                 WHERE p.user_id=$1 AND p.status != 'open'`;
+    const params = [userId];
+    let pIdx = 2;
+    if (symbol) { query += ` AND p.symbol=$${pIdx++}`; params.push(symbol.toUpperCase()); }
+    if (status) { query += ` AND p.status=$${pIdx++}`; params.push(status); }
+    query += ` ORDER BY p.closed_at DESC LIMIT $${pIdx++} OFFSET $${pIdx}`;
+    params.push(parseInt(limit), parseInt(offset));
+    const { rows } = await db.query(query, params);
+    return success(res, rows);
+  } catch (err) {
+    return error(res, err.message);
+  }
+}
+
+// ── Transaction History (ledger - futures only) ────────────────
+async function getTransactionHistory(req, res) {
+  try {
+    const userId = req.user.id;
+    const { asset, type, limit = 50, offset = 0 } = req.query;
+    let query = `SELECT l.*, c.symbol as coin_symbol
+                 FROM ledger l
+                 JOIN coins c ON c.id = l.coin_id
+                 WHERE l.user_id=$1 AND l.type LIKE 'futures%'`;
+    const params = [userId];
+    let pIdx = 2;
+    if (asset) { query += ` AND c.symbol=$${pIdx++}`; params.push(asset.toUpperCase()); }
+    if (type)  { query += ` AND l.type=$${pIdx++}`; params.push(type); }
+    query += ` ORDER BY l.created_at DESC LIMIT $${pIdx++} OFFSET $${pIdx}`;
+    params.push(parseInt(limit), parseInt(offset));
+    const { rows } = await db.query(query, params);
+    return success(res, rows);
+  } catch (err) {
+    return error(res, err.message);
+  }
+}
+
+// ── Funding Fee History (ledger - futures_funding only) ────────
+async function getFundingFeeHistory(req, res) {
+  try {
+    const userId = req.user.id;
+    const { asset, limit = 50, offset = 0 } = req.query;
+    let query = `SELECT l.*, c.symbol as coin_symbol
+                 FROM ledger l
+                 JOIN coins c ON c.id = l.coin_id
+                 WHERE l.user_id=$1 AND l.type='futures_funding'`;
+    const params = [userId];
+    let pIdx = 2;
+    if (asset) { query += ` AND c.symbol=$${pIdx++}`; params.push(asset.toUpperCase()); }
+    query += ` ORDER BY l.created_at DESC LIMIT $${pIdx++} OFFSET $${pIdx}`;
+    params.push(parseInt(limit), parseInt(offset));
+    const { rows } = await db.query(query, params);
+    return success(res, rows);
+  } catch (err) {
+    return error(res, err.message);
+  }
+}
+
+// ── Single Order Detail ──────────────────────────────────────
+async function getOrderDetail(req, res) {
+  try {
+    const userId  = req.user.id;
+    const orderId = parseInt(req.params.order_id);
+    const { rows: [order] } = await db.query(
+      `SELECT fo.*, ft.realized_pnl as trade_pnl, ft.fee as trade_fee, ft.is_maker
+       FROM futures_orders fo
+       LEFT JOIN futures_trades ft ON ft.order_id = fo.id
+       WHERE fo.id=$1 AND fo.user_id=$2 LIMIT 1`,
+      [orderId, userId]
+    );
+    if (!order) return error(res, 'Order not found', 404);
+    return success(res, order);
+  } catch (err) {
+    return error(res, err.message);
+  }
+}
+
 // ── Liquidation Logs ─────────────────────────────────────────
 async function getLiquidationLogs(req, res) {
   try {
@@ -721,4 +804,8 @@ module.exports = {
   getLiquidationLogs,
   modifyOrder,
   updatePositionTpSl,
+  getPositionHistory,
+  getTransactionHistory,
+  getFundingFeeHistory,
+  getOrderDetail,
 };

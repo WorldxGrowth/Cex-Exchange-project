@@ -82,15 +82,19 @@ router.put('/orders/:order_id/modify', orderLimit, ctrl.modifyOrder);
 router.delete('/orders/:order_id/cancel', cancelLimit, ctrl.cancelOrder);
 router.get('/orders/open',        ctrl.getOpenOrders);
 router.get('/orders/history',     ctrl.getOrderHistory);
+router.get('/orders/:order_id',   ctrl.getOrderDetail);
 
 // Positions
 router.get('/positions',          ctrl.getPositions);
 router.post('/positions/:position_id/close', ctrl.closePositionEndpoint);
 router.put('/positions/:position_id/tpsl',  ctrl.updatePositionTpSl);
+router.get('/positions/history',  ctrl.getPositionHistory);
 
 // Trade history + Liquidations
 router.get('/trades',             ctrl.getTradeHistory);
 router.get('/liquidations',       ctrl.getLiquidationLogs);
+router.get('/transactions',       ctrl.getTransactionHistory);
+router.get('/funding-fee',        ctrl.getFundingFeeHistory);
 
 // Settings
 router.post('/leverage',          ctrl.changeLeverage);
