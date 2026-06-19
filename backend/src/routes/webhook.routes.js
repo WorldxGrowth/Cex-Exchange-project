@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const alchemyWebhook = require('../services/alchemyWebhook');
+const solanaWebhook = require('../services/webhooks/solanaWebhookProcessor');
 const alchemyService = require('../services/alchemyService');
 const { adminAuth } = require('../middleware/admin.middleware');
 const db = require('../config/database');
@@ -77,6 +78,32 @@ router.post('/vdchain', async (req, res) => {
 
   } catch (e) {
     console.error('[WebhookRoute/VDNotify] Error:', e.message);
+    if (!res.headersSent) res.status(200).json({ received: true });
+  }
+});
+
+// ─────────────────────────────────────────────────
+// SOLANA WEBHOOK RECEIVER (Helius)
+// POST /api/v1/webhook/solana
+// ─────────────────────────────────────────────────
+router.post('/solana', async (req, res) => {
+  try {
+    res.status(200).json({ received: true });
+
+    const payload = req.body;
+    if (!payload) return;
+
+    setImmediate(async () => {
+      try {
+        const result = await solanaWebhook.processPayload(payload);
+        console.log('[WebhookRoute/Solana] Result:', result);
+      } catch (e) {
+        console.error('[WebhookRoute/Solana] Error:', e.message);
+      }
+    });
+
+  } catch (e) {
+    console.error('[WebhookRoute/Solana] Error:', e.message);
     if (!res.headersSent) res.status(200).json({ received: true });
   }
 });

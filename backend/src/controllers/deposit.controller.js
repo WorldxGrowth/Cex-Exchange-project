@@ -44,7 +44,7 @@ const getDepositAddress = async (req, res) => {
     // ── Address generate/fetch via walletRouter (multi-chain) ──
     const address = await walletRouter.getOrCreateDepositAddress(req.user.id, network);
 
-    // ── Webhook register — EVM only for now (TRON/Solana/Bitcoin webhooks pending) ──
+    // ── Webhook register — per chain_type (TRON polling pending) ──
     if (c.chain_type === 'evm') {
       setImmediate(async () => {
         try {
@@ -63,6 +63,24 @@ const getDepositAddress = async (req, res) => {
           }
         } catch (e) {
           console.error('[Deposit] Webhook register error (non-blocking):', e.message);
+        }
+      });
+    } else if (c.chain_type === 'solana') {
+      setImmediate(async () => {
+        try {
+          const heliusService = require('../services/webhooks/heliusService');
+          const existing = await db.query(
+            'SELECT id FROM user_deposit_addresses WHERE user_id=$1 AND network=$2',
+            [req.user.id, network]
+          );
+          if (existing.rows.length > 0) {
+            const ok = await heliusService.registerNewUserAddress(req.user.id, address);
+            if (ok) {
+              console.log(`[Deposit] ✅ Helius webhook registered: User ${req.user.id} ${network} ${address}`);
+            }
+          }
+        } catch (e) {
+          console.error('[Deposit] Helius register error (non-blocking):', e.message);
         }
       });
     }

@@ -26,7 +26,7 @@ class DepositDetector {
 
   async init() {
     try {
-      const networks = await db.query('SELECT * FROM networks WHERE is_active = true');
+      const networks = await db.query("SELECT * FROM networks WHERE is_active = true AND chain_type = 'evm'");
       for (const net of networks.rows) {
         if (!net.rpc_url) continue;
         this.networkMap[net.id] = net;
