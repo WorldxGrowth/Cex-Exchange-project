@@ -31,27 +31,38 @@ const BottomSheet = ({ open, onClose, children, height = '55vh' }: any) => {
   );
 };
 
-// Network config with CDN logos
-const NETWORKS = [
-  {
-    id: 'BSC', short: 'BSC',
-    name: 'BNB Smart Chain (BSC)', confirmations: 15,
+// Network visual config (logo + color) - lookup by short_name
+// Backend now provides which networks are ENABLED per coin (coin-networks API);
+// this lookup only supplies presentation details (logo/color), not eligibility.
+const NETWORK_VISUALS: Record<string, { logo: string; color: string; confirmations: number }> = {
+  BSC: {
     logo: 'https://bin.bnbstatic.com/image/admin_mgs_image_upload/20201110/87496d50-2408-43e1-ad4c-78b47b448a6a.png',
-    color: '#F3BA2F'
+    color: '#F3BA2F', confirmations: 15
   },
-  {
-    id: 'ETH', short: 'ETH',
-    name: 'Ethereum (ERC20)', confirmations: 20,
+  ETH: {
     logo: 'https://bin.bnbstatic.com/image/admin_mgs_image_upload/20201110/3a8c9fe6-2a76-4ace-aa07-415d994de6b5.png',
-    color: '#627EEA'
+    color: '#627EEA', confirmations: 20
   },
-  {
-    id: 'VDCHAIN', short: 'VDCHAIN',
-    name: 'VDChain Network', confirmations: 10,
+  VDCHAIN: {
     logo: 'https://vdscan.io/favicon.ico',
-    color: '#f0b90b'
+    color: '#f0b90b', confirmations: 10
   },
-];
+  TRX: {
+    logo: 'https://cryptologos.cc/logos/tron-trx-logo.png',
+    color: '#FF060A', confirmations: 20
+  },
+  BTC: {
+    logo: 'https://cryptologos.cc/logos/bitcoin-btc-logo.png',
+    color: '#F7931A', confirmations: 2
+  },
+  SOL: {
+    logo: 'https://cryptologos.cc/logos/solana-sol-logo.png',
+    color: '#9945FF', confirmations: 1
+  },
+};
+
+const getNetworkVisual = (shortName: string) =>
+  NETWORK_VISUALS[shortName] || { logo: '', color: 'var(--color-primary)', confirmations: 3 };
 
 // Highlighted address — first 6 + last 6 in primary color
 const HighlightedAddress = ({ address }: { address: string }) => {
@@ -82,6 +93,10 @@ export default function Deposit() {
   const [search, setSearch]                 = useState('');
   const [copied, setCopied]                 = useState(false);
 
+  // Dynamic networks for the currently selected coin (from coin_networks table)
+  const [coinNetworks, setCoinNetworks]     = useState<any[]>([]);
+  const [networksLoading, setNetworksLoading] = useState(false);
+
   useEffect(() => {
     marketAPI.getCoins().then((res: any) => {
       setCoins((res.data || []).filter((c: any) => c.is_deposit));
@@ -94,15 +109,32 @@ export default function Deposit() {
     c.name?.toLowerCase().includes(search.toLowerCase())
   );
 
+  // When a coin is selected, fetch ONLY the networks it actually supports
+  const handleCoinSelect = async (coin: any) => {
+    setSelectedCoin(coin);
+    setShowNetworkSheet(true);
+    setNetworksLoading(true);
+    setCoinNetworks([]);
+    try {
+      const res: any = await walletAPI.getCoinNetworks(coin.symbol);
+      const list = (res as any)?.data || res || [];
+      setCoinNetworks(Array.isArray(list) ? list : []);
+    } catch {
+      toast.error('Failed to load supported networks');
+    } finally {
+      setNetworksLoading(false);
+    }
+  };
+
   const handleNetworkSelect = async (network: any) => {
     setShowNetworkSheet(false);
     setLoading(true);
     try {
-      const res: any = await walletAPI.getDepositAddress(selectedCoin.symbol, network.short);
-      setDepositInfo({ ...res.data, network_name: network.name });
+      const res: any = await walletAPI.getDepositAddress(selectedCoin.symbol, network.network);
+      setDepositInfo({ ...res.data, network_name: network.network_name });
       setStep('address');
-    } catch {
-      toast.error('Failed to get address');
+    } catch (e: any) {
+      toast.error(e?.message || 'Failed to get address');
     } finally { setLoading(false); }
   };
 
@@ -232,7 +264,7 @@ export default function Deposit() {
           <div style={{ flex: 1, overflowY: 'auto' }}>
             {filtered.map((coin: any) => (
               <div key={coin.symbol}
-                onClick={() => { setSelectedCoin(coin); setShowNetworkSheet(true); }}
+                onClick={() => handleCoinSelect(coin)}
                 style={{ display: 'flex', alignItems: 'center', gap: 12,
                          padding: '14px 16px', cursor: 'pointer',
                          borderBottom: '1px solid var(--color-border)' }}
@@ -269,7 +301,7 @@ export default function Deposit() {
         </div>
       )}
 
-      {/* ── NETWORK SHEET ── */}
+      {/* ── NETWORK SHEET (now dynamic, per-coin) ── */}
       <BottomSheet open={showNetworkSheet}
         onClose={() => setShowNetworkSheet(false)} height="58vh">
         <div style={{ display: 'flex', alignItems: 'center',
@@ -293,41 +325,62 @@ export default function Deposit() {
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', padding: '0 16px 20px' }}>
-          {NETWORKS.map((net) => (
-            <div key={net.id} onClick={() => handleNetworkSelect(net)}
-              style={{ display: 'flex', alignItems: 'center', gap: 12,
-                       padding: '14px 16px', borderRadius: 14, marginBottom: 10,
-                       background: 'var(--color-surface2)',
-                       border: '1px solid var(--color-border)', cursor: 'pointer',
-                       transition: 'border-color 0.2s' }}
-              onMouseEnter={e => (e.currentTarget.style.borderColor = net.color)}
-              onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--color-border)')}>
-
-              {/* Network logo */}
-              <div style={{ width: 42, height: 42, borderRadius: '50%',
-                            background: net.color + '20', flexShrink: 0,
-                            display: 'flex', alignItems: 'center',
-                            justifyContent: 'center', overflow: 'hidden' }}>
-                <img src={net.logo} alt={net.short}
-                  style={{ width: 42, height: 42, borderRadius: '50%',
-                           objectFit: 'cover' }}
-                  onError={(e) => {
-                    (e.target as any).style.display = 'none';
-                    (e.target as any).parentElement.innerHTML =
-                      `<span style="font-weight:800;color:${net.color};font-size:14px">${net.short}</span>`;
-                  }} />
-              </div>
-
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, fontSize: 15,
-                              color: 'var(--color-text)' }}>{net.name}</div>
-                <div style={{ fontSize: 12, color: 'var(--color-success)', marginTop: 3 }}>
-                  ~{net.confirmations} confirmations
-                </div>
-              </div>
-              <ChevronRight size={16} color="var(--color-muted)" />
+          {networksLoading && (
+            <div style={{ textAlign: 'center', padding: 30, color: 'var(--color-muted)', fontSize: 13 }}>
+              Loading networks...
             </div>
-          ))}
+          )}
+
+          {!networksLoading && coinNetworks.length === 0 && (
+            <div style={{ textAlign: 'center', padding: 30, color: 'var(--color-muted)', fontSize: 13 }}>
+              No deposit networks available for {selectedCoin?.symbol}
+            </div>
+          )}
+
+          {!networksLoading && coinNetworks.map((net: any) => {
+            const visual = getNetworkVisual(net.network);
+            return (
+              <div key={net.network} onClick={() => handleNetworkSelect(net)}
+                style={{ display: 'flex', alignItems: 'center', gap: 12,
+                         padding: '14px 16px', borderRadius: 14, marginBottom: 10,
+                         background: 'var(--color-surface2)',
+                         border: '1px solid var(--color-border)', cursor: 'pointer',
+                         transition: 'border-color 0.2s' }}
+                onMouseEnter={e => (e.currentTarget.style.borderColor = visual.color)}
+                onMouseLeave={e => (e.currentTarget.style.borderColor = 'var(--color-border)')}>
+
+                {/* Network logo */}
+                <div style={{ width: 42, height: 42, borderRadius: '50%',
+                              background: visual.color + '20', flexShrink: 0,
+                              display: 'flex', alignItems: 'center',
+                              justifyContent: 'center', overflow: 'hidden' }}>
+                  {visual.logo ? (
+                    <img src={visual.logo} alt={net.network}
+                      style={{ width: 42, height: 42, borderRadius: '50%',
+                               objectFit: 'cover' }}
+                      onError={(e) => {
+                        (e.target as any).style.display = 'none';
+                        (e.target as any).parentElement.innerHTML =
+                          `<span style="font-weight:800;color:${visual.color};font-size:14px">${net.network}</span>`;
+                      }} />
+                  ) : (
+                    <span style={{ fontWeight: 800, color: visual.color, fontSize: 14 }}>
+                      {net.network}
+                    </span>
+                  )}
+                </div>
+
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15,
+                                color: 'var(--color-text)' }}>{net.network_name}</div>
+                  <div style={{ fontSize: 12, color: 'var(--color-success)', marginTop: 3 }}>
+                    ~{net.min_confirmations ?? visual.confirmations} confirmations
+                  </div>
+                </div>
+                <ChevronRight size={16} color="var(--color-muted)" />
+              </div>
+            );
+          })}
         </div>
       </BottomSheet>
 
@@ -405,9 +458,9 @@ export default function Deposit() {
           <div style={{ flex: 1 }}>
             {[
               { label: 'Min. deposit amount',
-                value: `${parseFloat(depositInfo.min_deposit || 0.1).toFixed(4)} ${depositInfo.coin || selectedCoin?.symbol}` },
+                value: `${parseFloat(depositInfo.min_deposit || 0.1).toFixed(4)} ${depositInfo.coin?.symbol || selectedCoin?.symbol}` },
               { label: 'Confirmations',
-                value: `${depositInfo.confirmations || 15} confirmations` },
+                value: `${depositInfo.confirmations_required || 15} confirmations` },
               { label: 'Contract address',
                 value: depositInfo.contract_address
                   ? `ends with ${depositInfo.contract_address.slice(-6)}`
