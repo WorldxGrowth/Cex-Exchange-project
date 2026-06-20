@@ -61,7 +61,7 @@ export const walletAPI = {
   getCoinNetworks:      (coin: string) => api.get(`/deposit/coin-networks?coin=${coin}`),
   getDeposits:          ()             => api.get('/wallet/deposits'),
   getDepositHistory:    (params?: any) => api.get('/deposit/history', { params }),
-  getWithdrawInfo:      (coin: string) => api.get(`/withdrawal/info?coin=${coin}`),
+  getWithdrawInfo:      (coin: string, network: string) => api.get(`/withdrawal/info?coin=${coin}&network=${network}`),
   requestWithdrawal:    (d: any)       => api.post('/withdrawal/request', d),
   getWithdrawalHistory: (params?: any) => api.get('/withdrawal/history', { params }),
   withdraw:             (d: any)       => api.post('/wallet/withdraw', d),

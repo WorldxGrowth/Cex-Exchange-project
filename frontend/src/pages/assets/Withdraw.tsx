@@ -31,14 +31,18 @@ const BottomSheet = ({ open, onClose, children, height = '55vh' }: any) => {
   );
 };
 
-const NETWORKS = [
-  { id: 'BSC', name: 'BNB Smart Chain (BSC)', color: '#F3BA2F',
-    logo: 'https://bin.bnbstatic.com/image/admin_mgs_image_upload/20201110/87496d50-2408-43e1-ad4c-78b47b448a6a.png' },
-  { id: 'ETH', name: 'Ethereum (ERC20)', color: '#627EEA',
-    logo: 'https://bin.bnbstatic.com/image/admin_mgs_image_upload/20201110/3a8c9fe6-2a76-4ace-aa07-415d994de6b5.png' },
-  { id: 'VDCHAIN', name: 'VDChain Network', color: '#f0b90b',
-    logo: 'https://vdscan.io/favicon.ico' },
-];
+// Network visual config (logo/color) - lookup by short_name
+// Eligibility/list comes dynamically from backend (coin-networks API)
+const NETWORK_VISUALS: Record<string, { logo: string; color: string }> = {
+  BSC:     { logo: 'https://bin.bnbstatic.com/image/admin_mgs_image_upload/20201110/87496d50-2408-43e1-ad4c-78b47b448a6a.png', color: '#F3BA2F' },
+  ETH:     { logo: 'https://bin.bnbstatic.com/image/admin_mgs_image_upload/20201110/3a8c9fe6-2a76-4ace-aa07-415d994de6b5.png', color: '#627EEA' },
+  VDCHAIN: { logo: 'https://vdscan.io/logo.png', color: '#f0b90b' },
+  TRX:     { logo: 'https://cryptologos.cc/logos/tron-trx-logo.png', color: '#FF060A' },
+  BTC:     { logo: 'https://cryptologos.cc/logos/bitcoin-btc-logo.png', color: '#F7931A' },
+  SOL:     { logo: 'https://cryptologos.cc/logos/solana-sol-logo.png', color: '#9945FF' },
+};
+const getNetworkVisual = (shortName?: string) =>
+  (shortName && NETWORK_VISUALS[shortName]) || { logo: '', color: 'var(--color-primary)' };
 
 export default function Withdraw() {
   const navigate = useNavigate();
@@ -57,7 +61,9 @@ export default function Withdraw() {
   const [withdrawInfo, setWithdrawInfo]     = useState<any>(null);
   const [address, setAddress]               = useState('');
   const [amount, setAmount]                 = useState('');
-  const [selectedNetwork, setSelectedNetwork] = useState<any>(NETWORKS[0]);
+  const [selectedNetwork, setSelectedNetwork] = useState<any>(null);
+  const [coinNetworks, setCoinNetworks]     = useState<any[]>([]);
+  const [networksLoading, setNetworksLoading] = useState(false);
   const [showNetworkSheet, setShowNetworkSheet] = useState(false);
   const [result, setResult]                 = useState<any>(null);
   const [idempotencyKey, setIdempotencyKey] = useState<string>('');
@@ -107,11 +113,41 @@ export default function Withdraw() {
     c.name?.toLowerCase().includes(tfCoinSearch.toLowerCase())
   );
 
+  // Coin select -> fetch which networks THIS coin actually supports for withdrawal
   const handleCoinSelect = async (coin: any) => {
     setSelectedCoin(coin);
+    setSelectedNetwork(null);
+    setWithdrawInfo(null);
+    setNetworksLoading(true);
+    setCoinNetworks([]);
+    try {
+      const res: any = await walletAPI.getCoinNetworks(coin.symbol);
+      const list = ((res as any)?.data || res || []).filter((n: any) => n.is_withdraw_enabled);
+      setCoinNetworks(list);
+      if (list.length === 1) {
+        // Only one network supported - auto-select it and fetch withdraw info directly
+        await handleNetworkSelect(coin, list[0]);
+      } else if (list.length === 0) {
+        toast.error(`No networks available for ${coin.symbol} withdrawal`);
+      } else {
+        // Multiple networks - go to form view AND open the network picker
+        // immediately, since withdrawInfo is empty until a network is chosen
+        setStep('form');
+        setActiveTab('withdraw');
+        setShowNetworkSheet(true);
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Failed to load networks');
+    } finally { setNetworksLoading(false); }
+  };
+
+  // Network select (or auto-select when only one) -> fetch withdraw info for that pair
+  const handleNetworkSelect = async (coin: any, network: any) => {
+    setSelectedNetwork(network);
+    setShowNetworkSheet(false);
     setLoading(true);
     try {
-      const res: any = await walletAPI.getWithdrawInfo(coin.symbol);
+      const res: any = await walletAPI.getWithdrawInfo(coin.symbol, network.network);
       setWithdrawInfo(res.data);
       setStep('form');
       setActiveTab('withdraw');
@@ -164,7 +200,7 @@ export default function Withdraw() {
     setLoading(true);
     try {
       const res: any = await walletAPI.requestWithdrawal({
-        coin: selectedCoin.symbol, network: selectedNetwork.id,
+        coin: selectedCoin.symbol, network: selectedNetwork?.network,
         amount, address, email_otp: emailCode,
         totp_code: withdrawInfo?.two_fa_enabled ? totpStr : undefined,
         idempotency_key: idempotencyKey,
@@ -295,7 +331,7 @@ export default function Withdraw() {
                       overflow: 'hidden', marginBottom: 20, flex: 1 }}>
           {[
             { label: 'Transaction ID', value: result.tx_id, mono: true, copy: true },
-            { label: 'Network',        value: selectedNetwork?.name },
+            { label: 'Network',        value: selectedNetwork?.network_name || selectedNetwork?.name },
             { label: 'To Address',     value: address?.slice(0,8) + '...' + address?.slice(-6), mono: true },
             { label: 'Amount',         value: `${result.amount} ${selectedCoin?.symbol}` },
             { label: 'Network Fee',    value: `${parseFloat(result.fee||0).toFixed(6)} ${selectedCoin?.symbol}` },
@@ -450,6 +486,21 @@ export default function Withdraw() {
           </div>
 
           {/* ── WITHDRAW TAB ── */}
+          {activeTab === 'withdraw' && !withdrawInfo && !networksLoading && (
+            <div style={{ padding: '60px 20px', textAlign: 'center' }}>
+              <div style={{ color: 'var(--color-muted)', fontSize: 14, marginBottom: 16 }}>
+                Select a network to continue
+              </div>
+              <button onClick={() => setShowNetworkSheet(true)} style={{
+                padding: '12px 24px', borderRadius: 12, border: '1px solid var(--color-border)',
+                background: 'var(--color-surface)', color: 'var(--color-text)',
+                fontWeight: 600, cursor: 'pointer', fontSize: 14
+              }}>
+                Choose Network →
+              </button>
+            </div>
+          )}
+
           {activeTab === 'withdraw' && withdrawInfo && (
             <div style={{ flex: 1, overflowY: 'auto', padding: '20px 16px' }}>
 
@@ -460,7 +511,7 @@ export default function Withdraw() {
                 <AlertTriangle size={16} color="#f0b90b" style={{ flexShrink: 0, marginTop: 1 }} />
                 <div style={{ fontSize: 13, color: 'var(--color-muted)', lineHeight: 1.5 }}>
                   Only send to <strong style={{ color: 'var(--color-text)' }}>
-                    {selectedNetwork.name}
+                    {selectedNetwork?.network_name || selectedNetwork?.name}
                   </strong> address. Wrong network = permanent loss!
                 </div>
               </div>
@@ -473,11 +524,11 @@ export default function Withdraw() {
                   borderRadius: 12, cursor: 'pointer', background: 'var(--color-surface)',
                   border: '1px solid var(--color-border)'
                 }}>
-                  <img src={selectedNetwork.logo} alt=""
+                  <img src={getNetworkVisual(selectedNetwork?.network).logo} alt=""
                     style={{ width: 28, height: 28, borderRadius: '50%' }}
                     onError={(e) => { (e.target as any).style.display = 'none'; }} />
                   <span style={{ flex: 1, fontWeight: 600, fontSize: 15 }}>
-                    {selectedNetwork.name}
+                    {selectedNetwork?.network_name || selectedNetwork?.name}
                   </span>
                   <ChevronRight size={16} color="var(--color-muted)" />
                 </div>
@@ -837,7 +888,7 @@ export default function Withdraw() {
                         border: '1px solid var(--color-border)' }}>
             {[
               { label: 'Coin',       value: selectedCoin?.symbol },
-              { label: 'Network',    value: selectedNetwork.name },
+              { label: 'Network',    value: selectedNetwork?.network_name || selectedNetwork?.name },
               { label: 'To',         value: address.slice(0,8) + '...' + address.slice(-6) },
               { label: 'Amount',     value: `${parseFloat(amount).toFixed(6)} ${selectedCoin?.symbol}` },
               { label: 'Fee',        value: `${feeQty.toFixed(6)} ${selectedCoin?.symbol}` },
@@ -863,7 +914,7 @@ export default function Withdraw() {
         </div>
       )}
 
-      {/* Network Sheet */}
+      {/* Network Sheet - dynamic, per-coin */}
       <BottomSheet open={showNetworkSheet}
         onClose={() => setShowNetworkSheet(false)} height="50vh">
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -881,22 +932,39 @@ export default function Withdraw() {
           Only withdraw to addresses on the selected network!
         </div>
         <div style={{ flex: 1, overflowY: 'auto', padding: '0 16px 20px' }}>
-          {NETWORKS.map(net => (
-            <div key={net.id} onClick={() => { setSelectedNetwork(net); setShowNetworkSheet(false); }}
-              style={{ display: 'flex', alignItems: 'center', gap: 12,
-                       padding: '14px 16px', borderRadius: 14, marginBottom: 10,
-                       background: selectedNetwork.id === net.id ? net.color + '15' : 'var(--color-surface)',
-                       border: '1px solid ' + (selectedNetwork.id === net.id ? net.color : 'var(--color-border)'),
-                       cursor: 'pointer' }}>
-              <img src={net.logo} alt={net.id}
-                style={{ width: 38, height: 38, borderRadius: '50%' }}
-                onError={(e) => { (e.target as any).style.display = 'none'; }} />
-              <div style={{ flex: 1 }}>
-                <div style={{ fontWeight: 700, fontSize: 15 }}>{net.name}</div>
-              </div>
-              {selectedNetwork.id === net.id && <Check size={18} color={net.color} />}
+          {networksLoading && (
+            <div style={{ textAlign: 'center', padding: 30, color: 'var(--color-muted)', fontSize: 13 }}>
+              Loading networks...
             </div>
-          ))}
+          )}
+          {!networksLoading && coinNetworks.length === 0 && (
+            <div style={{ textAlign: 'center', padding: 30, color: 'var(--color-muted)', fontSize: 13 }}>
+              No withdrawal networks available for {selectedCoin?.symbol}
+            </div>
+          )}
+          {!networksLoading && coinNetworks.map((net: any) => {
+            const visual = getNetworkVisual(net.network);
+            const isSelected = selectedNetwork?.network === net.network;
+            return (
+              <div key={net.network} onClick={() => handleNetworkSelect(selectedCoin, net)}
+                style={{ display: 'flex', alignItems: 'center', gap: 12,
+                         padding: '14px 16px', borderRadius: 14, marginBottom: 10,
+                         background: isSelected ? visual.color + '15' : 'var(--color-surface)',
+                         border: '1px solid ' + (isSelected ? visual.color : 'var(--color-border)'),
+                         cursor: 'pointer' }}>
+                <img src={visual.logo} alt={net.network}
+                  style={{ width: 38, height: 38, borderRadius: '50%' }}
+                  onError={(e) => { (e.target as any).style.display = 'none'; }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontWeight: 700, fontSize: 15 }}>{net.network_name}</div>
+                  <div style={{ fontSize: 12, color: 'var(--color-success)', marginTop: 2 }}>
+                    ~{net.min_confirmations} confirmations
+                  </div>
+                </div>
+                {isSelected && <Check size={18} color={visual.color} />}
+              </div>
+            );
+          })}
         </div>
       </BottomSheet>
 
