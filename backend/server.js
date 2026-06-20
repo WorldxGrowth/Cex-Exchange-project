@@ -141,6 +141,15 @@ try {
   console.error('SolanaSweepService FAILED:', e.message);
 }
 
+// ── Sweep Service (Bitcoin) ─────────────────────────
+const bitcoinSweep = require('./src/services/wallet/sweep/bitcoinSweep');
+try {
+  bitcoinSweep.start();
+  console.log('BitcoinSweepService loaded');
+} catch(e) {
+  console.error('BitcoinSweepService FAILED:', e.message);
+}
+
 // ── Spot Reconcile Job (every 1 min) ───────────────
 const reconcileService = require('./src/services/trading/reconcile');
 setInterval(() => {
