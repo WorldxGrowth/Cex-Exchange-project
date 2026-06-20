@@ -118,10 +118,19 @@ try {
   console.error('TronDepositScanner FAILED:', e.message);
 }
 
-// ── Sweep Service ──────────────────────────────────
+// ── Sweep Service (EVM) ─────────────────────────────
 const sweepService = require('./src/services/wallet/sweep/evmSweep');
 sweepService.start();
 console.log('SweepService loaded');
+
+// ── Sweep Service (TRON) ────────────────────────────
+const tronSweep = require('./src/services/wallet/sweep/tronSweep');
+try {
+  tronSweep.start();
+  console.log('TronSweepService loaded');
+} catch(e) {
+  console.error('TronSweepService FAILED:', e.message);
+}
 
 // ── Spot Reconcile Job (every 1 min) ───────────────
 const reconcileService = require('./src/services/trading/reconcile');

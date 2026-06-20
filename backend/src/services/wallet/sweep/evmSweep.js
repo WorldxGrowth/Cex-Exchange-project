@@ -64,6 +64,7 @@ class SweepService {
         AND d.status = 'completed'
         AND ss.is_active = true
         AND n.is_active = true
+        AND n.chain_type = 'evm'
         AND n.rpc_url IS NOT NULL
         AND uda.address IS NOT NULL
       ORDER BY d.user_id
@@ -109,11 +110,14 @@ class SweepService {
     const userPrivKey  = evmWalletService.getPrivateKey(user_id);
     const userSigner   = new ethers.Wallet(userPrivKey, provider);
 
-    // Coins for this network
+    // Coins for this network (via coin_networks - multi-chain aware)
     const coins = await db.query(`
-      SELECT id, symbol, contract_address, decimals
-      FROM coins
-      WHERE network_id = $1 AND is_active = true AND is_deposit = true
+      SELECT c.id, c.symbol, cn.contract_address, cn.decimals
+      FROM coin_networks cn
+      JOIN coins c ON c.id = cn.coin_id
+      WHERE cn.network_id = $1
+        AND c.is_active = true AND c.is_deposit = true
+        AND cn.is_deposit_enabled = true
     `, [network_id]);
 
     for (const coin of coins.rows) {
