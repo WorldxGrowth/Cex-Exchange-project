@@ -109,6 +109,15 @@ try {
 const marketMaker = require('./src/services/marketMaker');
 marketMaker.init().then(() => marketMaker.start()).catch(console.error);
 
+// ── TRON Deposit Scanner (polling, no reliable push-webhook for TRON) ──
+const tronDepositScanner = require('./src/services/wallet/deposits/tronDepositScanner');
+try {
+  tronDepositScanner.start();
+  console.log('TronDepositScanner loaded');
+} catch(e) {
+  console.error('TronDepositScanner FAILED:', e.message);
+}
+
 // ── Sweep Service ──────────────────────────────────
 const sweepService = require('./src/services/wallet/sweepService');
 sweepService.start();
