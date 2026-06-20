@@ -159,3 +159,26 @@ Object.assign(adminAPI, {
   changePinStep1:   (data) => api.post('/admin/security/change-pin/step1', data),
   changePinStep2:   (data) => api.post('/admin/security/change-pin/step2', data),
 });
+
+// Coin Networks (multi-chain per-coin network mapping)
+Object.assign(adminAPI, {
+  getCoinNetworks:    (coinId) => api.get(`/admin/coins/${coinId}/networks`),
+  addCoinNetwork:     (coinId, data) => api.post(`/admin/coins/${coinId}/networks`, data),
+  updateCoinNetwork:  (id, data) => api.put(`/admin/coin-networks/${id}`, data),
+  deleteCoinNetwork:  (id) => api.delete(`/admin/coin-networks/${id}`),
+});
+
+// Futures Pairs
+Object.assign(adminAPI, {
+  getFuturesPairs:    (params) => api.get('/admin/futures-pairs', { params }),
+  addFuturesPair:     (data) => api.post('/admin/futures-pairs', data),
+  updateFuturesPair:  (id, data) => api.put(`/admin/futures-pairs/${id}`, data),
+  deleteFuturesPair:  (id) => api.delete(`/admin/futures-pairs/${id}`),
+});
+
+// Branding Image Upload (multipart/form-data)
+Object.assign(adminAPI, {
+  uploadImage: (formData) => api.post('/admin/upload-image', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  }),
+});

@@ -37,6 +37,9 @@ app.use('/api/v1/webhook/vdchain', express.raw({ type: 'application/json' }));
 // ── JSON middleware ────────────────────────────────
 app.use(express.json({ limit: '50mb' }));
 
+// ── Static file serving for uploaded branding assets (logos, favicons, etc.) ──
+app.use('/uploads', express.static(require('path').join(__dirname, 'uploads')));
+
 // ── Health check ───────────────────────────────────
 app.get('/health', (req, res) => {
   res.json({

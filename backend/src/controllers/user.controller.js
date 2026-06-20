@@ -66,21 +66,27 @@ const updateProfile = async (req, res) => {
   }
 };
 
+// Avatar upload — now file-based (multer), NOT base64-into-DB.
+// users.avatar stores only the URL (small string, fits VARCHAR easily).
+// Old base64-in-body path removed: it silently failed for any real
+// photo because base64 strings are thousands of characters long and
+// the column was VARCHAR(255) - this is the exact bug that was fixed.
 const uploadAvatar = async (req, res) => {
   try {
-    const { avatar } = req.body;
-    if (!avatar) return error(res, 'Avatar required');
-    const sizeInBytes = Buffer.byteLength(
-      avatar.replace(/^data:image\/\w+;base64,/, ''), 'base64'
-    );
-    if (sizeInBytes > 2 * 1024 * 1024)
-      return error(res, 'Image too large. Max 2MB');
+    if (!req.file) return error(res, 'Avatar file required');
+
+    const baseUrl = (process.env.API_BASE_URL || `${req.protocol}://${req.get('host')}/api/v1`).replace(/\/api\/v1$/, '');
+    const avatarUrl = `${baseUrl}/uploads/avatars/${req.file.filename}`;
+
     await db.query(
       'UPDATE users SET avatar=$1, updated_at=NOW() WHERE id=$2',
-      [avatar, req.user.id]
+      [avatarUrl, req.user.id]
     );
-    return success(res, { avatar }, 'Avatar updated');
-  } catch (err) { return error(res, 'Failed', 500); }
+    return success(res, { avatar: avatarUrl }, 'Avatar updated');
+  } catch (err) {
+    console.error('uploadAvatar error:', err.message);
+    return error(res, 'Failed', 500);
+  }
 };
 
 const changePassword = async (req, res) => {

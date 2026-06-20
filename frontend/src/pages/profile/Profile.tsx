@@ -42,15 +42,20 @@ export default function Profile() {
     const file = e.target.files?.[0];
     if (!file) return;
     if (file.size > 2 * 1024 * 1024) { toast.error('Max 2MB'); return; }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64 = reader.result as string;
-      setAvatar(base64);
-      userAPI.uploadAvatar({ avatar: base64 })
-        .then(() => toast.success('Avatar updated!'))
-        .catch(() => toast.error('Failed'));
-    };
-    reader.readAsDataURL(file);
+
+    // Show an instant local preview while the real upload happens in the background
+    const localPreviewUrl = URL.createObjectURL(file);
+    setAvatar(localPreviewUrl);
+
+    const formData = new FormData();
+    formData.append('avatar', file);
+
+    userAPI.uploadAvatar(formData)
+      .then((res: any) => {
+        setAvatar(res.data.avatar); // swap local preview for the real server URL
+        toast.success('Avatar updated!');
+      })
+      .catch(() => toast.error('Failed'));
   };
 
   const maskEmail = (email: string) => {

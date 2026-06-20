@@ -36,15 +36,15 @@ const BottomSheet = ({ open, onClose, children, height = '55vh' }: any) => {
 // this lookup only supplies presentation details (logo/color), not eligibility.
 const NETWORK_VISUALS: Record<string, { logo: string; color: string; confirmations: number }> = {
   BSC: {
-    logo: 'https://bin.bnbstatic.com/image/admin_mgs_image_upload/20201110/87496d50-2408-43e1-ad4c-78b47b448a6a.png',
+    logo: 'https://cryptologos.cc/logos/bnb-bnb-logo.png',
     color: '#F3BA2F', confirmations: 15
   },
   ETH: {
-    logo: 'https://bin.bnbstatic.com/image/admin_mgs_image_upload/20201110/3a8c9fe6-2a76-4ace-aa07-415d994de6b5.png',
+    logo: 'https://cryptologos.cc/logos/ethereum-eth-logo.png',
     color: '#627EEA', confirmations: 20
   },
   VDCHAIN: {
-    logo: 'https://vdscan.io/favicon.ico',
+    logo: 'https://vdscan.io/logo.png',
     color: '#f0b90b', confirmations: 10
   },
   TRX: {

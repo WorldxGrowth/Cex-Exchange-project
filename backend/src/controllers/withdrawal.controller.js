@@ -277,8 +277,15 @@ const requestWithdrawal = async (req, res) => {
       return error(res, `Max withdrawal: ${ws.max_amount} ${coin}`);
 
     const feeQty     = await calculateFee(cn.coin_id, ws.fee_fixed, ws.fee_type || 'fixed_qty');
-    const totalDeduct = amt + feeQty;
-    const receiveAmt  = amt;
+    // Fee comes OUT of the requested amount (market standard - matches
+    // frontend display and the MAX button logic): user enters X, balance
+    // deducts X, recipient gets X-fee. NOT X+fee deducted from balance.
+    const totalDeduct = amt;
+    const receiveAmt  = amt - feeQty;
+    if (receiveAmt <= 0) {
+      await client.query('ROLLBACK');
+      return error(res, `Amount too small to cover the fee (${feeQty} ${coin})`);
+    }
 
     console.log(`[Withdraw] ${coin} on ${network}: amt=${amt} fee=${feeQty} total=${totalDeduct}`);
 

@@ -11,7 +11,8 @@ router.use(authenticate);
 
 router.get('/profile',               getProfile);
 router.put('/profile',               updateProfile);
-router.post('/avatar',               uploadAvatar);
+const uploadAvatarMiddleware = require('../middleware/uploadAvatar.middleware');
+router.post('/avatar',               uploadAvatarMiddleware.single('avatar'), uploadAvatar);
 router.post('/change-password',      changePassword);
 router.post('/anti-phish-code',      setAntiPhishCode);
 router.get('/login-history',         getLoginHistory);

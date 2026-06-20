@@ -29,7 +29,11 @@ const {
   getCmsPages, getCmsPage, addCmsPage, updateCmsPage, deleteCmsPage,
   adminSetup2FA, adminEnable2FA, adminDisable2FA, adminGet2FAStatus,
   adminToggleOTP, adminChangePinStep1, adminChangePinStep2,
+  getCoinNetworksAdmin, addCoinNetwork, updateCoinNetwork, deleteCoinNetwork,
+  getFuturesPairsAdmin, addFuturesPair, updateFuturesPair, deleteFuturesPair,
+  uploadBrandingImage,
 } = require('../controllers/admin.controller');
+const upload = require('../middleware/upload.middleware');
 const { adminLoginLimiter } = require('../middleware/rateLimiter');
 
 // ── Public Routes (No Auth) ───────────────────
@@ -72,10 +76,22 @@ router.get('/coins',         getCoinsAdmin);
 router.post('/coins',        audit('coin_add','coins'),                           addCoin);
 router.put('/coins/:id',     audit('coin_update','coins'),                        updateCoin);
 
+// ── Coin Networks (multi-chain per-coin network mapping) ────
+router.get('/coins/:coinId/networks',  getCoinNetworksAdmin);
+router.post('/coins/:coinId/networks', audit('coin_network_add','coin_networks'),    addCoinNetwork);
+router.put('/coin-networks/:id',       audit('coin_network_update','coin_networks'), updateCoinNetwork);
+router.delete('/coin-networks/:id',    audit('coin_network_delete','coin_networks'), deleteCoinNetwork);
+
 // ── Trading Pairs ────────────────────────────
 router.get('/pairs',         getTradingPairs);
 router.post('/pairs',        audit('pair_add','pairs'),                           addTradingPair);
 router.put('/pairs/:id',     audit('pair_update','pairs'),                        updateTradingPair);
+
+// ── Futures Pairs ────────────────────────────
+router.get('/futures-pairs',      getFuturesPairsAdmin);
+router.post('/futures-pairs',     audit('futures_pair_add','futures_pairs'),    addFuturesPair);
+router.put('/futures-pairs/:id',  audit('futures_pair_update','futures_pairs'), updateFuturesPair);
+router.delete('/futures-pairs/:id', audit('futures_pair_delete','futures_pairs'), deleteFuturesPair);
 
 // ── OrderBook CRUD ───────────────────────────
 router.get('/orderbook',             getAdminOrders);
@@ -133,6 +149,9 @@ router.get('/cms/:id',     getCmsPage);
 router.post('/cms',        audit('cms_add','cms'),                                addCmsPage);
 router.put('/cms/:id',     audit('cms_update','cms'),                             updateCmsPage);
 router.delete('/cms/:id',  audit('cms_delete','cms'),                             deleteCmsPage);
+
+// ── Branding Image Upload ────────────────────
+router.post('/upload-image', upload.single('image'), audit('image_upload','branding'), uploadBrandingImage);
 
 // ── Settings ─────────────────────────────────
 router.get('/settings',      getSettings);
