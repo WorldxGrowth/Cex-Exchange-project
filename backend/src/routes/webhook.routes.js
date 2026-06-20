@@ -1,9 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const alchemyWebhook = require('../services/alchemyWebhook');
+const alchemyWebhook = require('../services/webhooks/evmWebhookProcessor');
 const solanaWebhook = require('../services/webhooks/solanaWebhookProcessor');
 const bitcoinWebhook = require('../services/webhooks/bitcoinWebhookProcessor');
-const alchemyService = require('../services/alchemyService');
+const alchemyService = require('../services/webhooks/evmWebhookService');
 const { adminAuth } = require('../middleware/admin.middleware');
 const db = require('../config/database');
 const { success, error } = require('../utils/response');

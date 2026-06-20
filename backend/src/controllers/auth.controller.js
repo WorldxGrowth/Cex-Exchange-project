@@ -60,7 +60,7 @@ const getRequestInfo = (req) => {
 const registerAddressToAlchemy = async (userId) => {
   try {
     if (process.env.ALCHEMY_NOTIFY_ENABLED !== 'true') return;
-    const alchemyService = require('../services/alchemyService');
+    const alchemyService = require('../services/webhooks/evmWebhookService');
     const addresses = await db.query(
       'SELECT network, address FROM user_deposit_addresses WHERE user_id = $1',
       [userId]

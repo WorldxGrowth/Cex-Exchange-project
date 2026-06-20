@@ -93,7 +93,7 @@ const { startPriceUpdater } = require('./src/jobs/priceUpdater');
 startPriceUpdater();
 
 // ── Deposit Detector ───────────────────────────────
-const depositDetector = require('./src/services/wallet/depositDetector');
+const depositDetector = require('./src/services/wallet/deposits/evmDepositScanner');
 depositDetector.init().then(() => depositDetector.start()).catch(console.error);
 
 // ── Spot Order Matching Engine (VDC internal) ──────
@@ -119,7 +119,7 @@ try {
 }
 
 // ── Sweep Service ──────────────────────────────────
-const sweepService = require('./src/services/wallet/sweepService');
+const sweepService = require('./src/services/wallet/sweep/evmSweep');
 sweepService.start();
 console.log('SweepService loaded');
 

@@ -12,6 +12,7 @@ const getDepositAddress = async (req, res) => {
     // ── Coin + Network lookup via coin_networks (multi-chain aware) ──
     const cnCheck = await db.query(`
       SELECT cn.id as cn_id, cn.is_deposit_enabled, cn.min_confirmations,
+             cn.contract_address,
              c.id as coin_id, c.symbol, c.name, c.logo_url,
              c.is_deposit, c.maintenance_mode,
              c.deposit_disabled_reason, c.deposit_notice,
@@ -48,7 +49,7 @@ const getDepositAddress = async (req, res) => {
     if (c.chain_type === 'evm') {
       setImmediate(async () => {
         try {
-          const alchemyService = require('../services/alchemyService');
+          const alchemyService = require('../services/webhooks/evmWebhookService');
           const existing = await db.query(
             'SELECT id FROM user_deposit_addresses WHERE user_id=$1 AND network=$2',
             [req.user.id, network]
@@ -114,6 +115,7 @@ const getDepositAddress = async (req, res) => {
       coin: { symbol: c.symbol, name: c.name, logo_url: c.logo_url },
       min_deposit: c.min_deposit || '1',
       confirmations_required: c.min_confirmations || 3,
+      contract_address: c.contract_address || null,
       warning: `Only send ${coin} on ${network} network!`
     });
 
