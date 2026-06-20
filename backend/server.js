@@ -132,6 +132,15 @@ try {
   console.error('TronSweepService FAILED:', e.message);
 }
 
+// ── Sweep Service (Solana) ──────────────────────────
+const solanaSweep = require('./src/services/wallet/sweep/solanaSweep');
+try {
+  solanaSweep.start();
+  console.log('SolanaSweepService loaded');
+} catch(e) {
+  console.error('SolanaSweepService FAILED:', e.message);
+}
+
 // ── Spot Reconcile Job (every 1 min) ───────────────
 const reconcileService = require('./src/services/trading/reconcile');
 setInterval(() => {
