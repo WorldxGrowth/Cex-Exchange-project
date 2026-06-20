@@ -160,12 +160,12 @@ class BitcoinSweepService {
           index: utxo.tx_output_n,
           witnessUtxo: {
             script: Buffer.from(utxo.script, 'hex'),
-            value: utxo.value
+            value: BigInt(utxo.value)
           }
         });
       }
 
-      psbt.addOutput({ address: master_address, value: sendAmountSats });
+      psbt.addOutput({ address: master_address, value: BigInt(sendAmountSats) });
 
       for (let i = 0; i < utxos.length; i++) {
         psbt.signInput(i, keyPair);
