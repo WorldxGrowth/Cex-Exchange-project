@@ -179,6 +179,11 @@ class AlchemyWebhookProcessor {
 
       console.log(`[AlchemyWH] ✅ DEPOSIT: User ${userId} +${amount} ${coinSymbol} | ${network} | ${txHash.slice(0,12)}...`);
 
+      // First-deposit bonus check (non-blocking, safe on every deposit -
+      // internally verifies this was genuinely the user's first one)
+      require('../bonusService').creditFirstDepositBonus(userId, coinId, amount)
+        .catch(e => console.error('[FirstDepositBonus] error:', e.message));
+
       db.query('SELECT email FROM users WHERE id = $1', [userId])
         .then(u => {
           if (u.rows[0]) {

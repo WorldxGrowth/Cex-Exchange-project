@@ -78,6 +78,58 @@ const registerAddressToAlchemy = async (userId) => {
 // ================================
 // REGISTER
 // ================================
+// ── Signup Bonus Helper ──────────────────────────
+// Reads system_settings dynamically every time - admin can enable/disable
+// or change the amount anytime without any code/deploy needed.
+const creditSignupBonus = async (userId) => {
+  const enabledRow = await db.query(
+    `SELECT value FROM system_settings WHERE key='signup_bonus_enabled'`
+  );
+  if (enabledRow.rows[0]?.value !== 'true') return; // feature off, do nothing
+
+  const amountRow = await db.query(
+    `SELECT value FROM system_settings WHERE key='signup_bonus_amount'`
+  );
+  const bonusAmount = parseFloat(amountRow.rows[0]?.value || 0);
+  if (bonusAmount <= 0) return;
+
+  const coinRow = await db.query(`SELECT id FROM coins WHERE symbol='USDT' LIMIT 1`);
+  const coinId = coinRow.rows[0]?.id;
+  if (!coinId) { console.error('[SignupBonus] USDT coin not found'); return; }
+
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const balRow = await client.query(`
+      SELECT available FROM balances
+      WHERE user_id=$1 AND coin_id=$2 AND account_type='spot' FOR UPDATE
+    `, [userId, coinId]);
+    const balBefore = parseFloat(balRow.rows[0]?.available || 0);
+
+    await client.query(`
+      INSERT INTO balances (user_id, coin_id, account_type, available, locked)
+      VALUES ($1,$2,'spot',$3,0)
+      ON CONFLICT (user_id, coin_id, account_type)
+      DO UPDATE SET available = balances.available + $3, updated_at = NOW()
+    `, [userId, coinId, bonusAmount]);
+
+    await client.query(`
+      INSERT INTO ledger (user_id, coin_id, type, amount, balance_before, balance_after, description)
+      VALUES ($1,$2,'bonus',$3,$4,$5,$6)
+    `, [userId, coinId, bonusAmount, balBefore, balBefore + bonusAmount,
+        `Signup bonus: ${bonusAmount} USDT`]);
+
+    await client.query('COMMIT');
+    console.log(`[SignupBonus] ✅ Credited ${bonusAmount} USDT to user ${userId}`);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('[SignupBonus] creditSignupBonus error:', err.message);
+  } finally {
+    client.release();
+  }
+};
+
 const register = async (req, res) => {
   try {
     const { email, phone, password, referral_code } = req.body;
@@ -141,6 +193,10 @@ const register = async (req, res) => {
       INSERT INTO security_logs (user_id, action, ip_address, status)
       VALUES ($1, 'register', $2, 'success')
     `, [user.id, reqInfo.ip]);
+
+    // ── Signup Bonus (admin-controlled, system_settings: signup_bonus_enabled/amount) ──
+    // Non-blocking - never let a bonus-credit failure break registration itself
+    creditSignupBonus(user.id).catch(e => console.error('[SignupBonus] error:', e.message));
 
     sendEmail('sendWelcomeEmail', user);
     setTimeout(() => registerAddressToAlchemy(user.id), 3000);

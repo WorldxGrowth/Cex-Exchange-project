@@ -20,12 +20,28 @@ const statusColor: any = {
   rejected:  'var(--color-danger)',
 };
 
+// Visual labels for ledger "type" values shown under the "All" tab
+// (deposit/withdraw already have their own dedicated tabs with richer
+// detail pages, so "All" focuses on everything else: bonus, trades, etc.)
+const TYPE_LABEL: Record<string, { label: string; color: string }> = {
+  deposit:        { label: '↓ Deposit',     color: 'var(--color-success)' },
+  withdrawal:     { label: '↑ Withdraw',    color: 'var(--color-danger)' },
+  bonus:          { label: '🎁 Bonus',       color: 'var(--color-primary)' },
+  trade_buy:      { label: '↓ Buy',          color: 'var(--color-success)' },
+  trade_sell:     { label: '↑ Sell',         color: 'var(--color-danger)' },
+  order_lock:     { label: '🔒 Order Lock',  color: 'var(--color-warning)' },
+  order_unlock:   { label: '🔓 Order Unlock',color: 'var(--color-muted)' },
+  transfer:       { label: '↔ Transfer',     color: 'var(--color-muted)' },
+};
+
 export default function DepositHistory() {
   const navigate = useNavigate();
-  const [tab, setTab]           = useState<'deposit'|'withdraw'>('deposit');
+  const [tab, setTab]           = useState<'deposit'|'withdraw'|'all'>('deposit');
   const [allDeposits, setAllDeposits]   = useState<any[]>([]);
   const [allWithdraws, setAllWithdraws] = useState<any[]>([]);
+  const [allOther, setAllOther]         = useState<any[]>([]);
   const [loading, setLoading]   = useState(true);
+  const [otherLoading, setOtherLoading] = useState(false);
   const [coinFilter, setCoinFilter]     = useState('ALL');
   const [dateFilter, setDateFilter]     = useState(0);
   const [coins, setCoins]       = useState<string[]>([]);
@@ -51,6 +67,22 @@ export default function DepositHistory() {
     });
   }, []);
 
+  // "All" tab loads on-demand from the unified ledger endpoint, and
+  // re-fetches whenever the date filter changes (server-side filtering
+  // is more efficient than pulling everything and filtering in JS,
+  // especially as ledger history grows over time).
+  useEffect(() => {
+    if (tab !== 'all') return;
+    setOtherLoading(true);
+    walletAPI.getTransactions({ type: 'other', limit: 100, days: dateFilter || undefined })
+      .then((res: any) => {
+        const txns = res.data?.transactions || [];
+        setAllOther(txns);
+        setOtherLoading(false);
+      })
+      .catch(() => { setAllOther([]); setOtherLoading(false); });
+  }, [tab, dateFilter]);
+
   const filterData = (data: any[]) => {
     let filtered = [...data];
     // Coin filter
@@ -59,8 +91,9 @@ export default function DepositHistory() {
         (d.symbol || d.coin || '').toUpperCase() === coinFilter
       );
     }
-    // Date filter
-    if (dateFilter > 0) {
+    // Date filter (client-side for deposit/withdraw tabs - their lists
+    // are already fully loaded; "All" tab filters server-side instead)
+    if (dateFilter > 0 && tab !== 'all') {
       const cutoff = new Date();
       cutoff.setDate(cutoff.getDate() - dateFilter);
       filtered = filtered.filter(d =>
@@ -71,8 +104,10 @@ export default function DepositHistory() {
   };
 
   const currentData = filterData(
-    tab === 'deposit' ? allDeposits : allWithdraws
+    tab === 'deposit' ? allDeposits : tab === 'withdraw' ? allWithdraws : allOther
   );
+
+  const isLoading = tab === 'all' ? otherLoading : loading;
 
   return (
     <div style={{ background: 'var(--color-bg)', minHeight: '100vh' }}>
@@ -104,7 +139,7 @@ export default function DepositHistory() {
       {/* Tabs */}
       <div style={{ display: 'flex', background: 'var(--color-surface)',
                     borderBottom: '1px solid var(--color-border)' }}>
-        {(['deposit', 'withdraw'] as const).map(t => (
+        {(['deposit', 'withdraw', 'all'] as const).map(t => (
           <button key={t} onClick={() => setTab(t)} style={{
             flex: 1, padding: '12px', background: 'none', border: 'none',
             cursor: 'pointer', fontSize: 14, fontWeight: tab === t ? 600 : 400,
@@ -112,8 +147,8 @@ export default function DepositHistory() {
             borderBottom: tab === t
               ? '2px solid var(--color-primary)' : '2px solid transparent'
           }}>
-            {t.charAt(0).toUpperCase() + t.slice(1)}
-            {tab === t && (
+            {t === 'all' ? 'All' : t.charAt(0).toUpperCase() + t.slice(1)}
+            {t !== 'all' && tab === t && (
               <span style={{ marginLeft: 6, fontSize: 11,
                              background: 'var(--color-surface2)',
                              padding: '1px 6px', borderRadius: 10 }}>
@@ -147,29 +182,33 @@ export default function DepositHistory() {
             ))}
           </div>
 
-          {/* Coin filter */}
-          <div style={{ fontSize: 12, color: 'var(--color-muted)',
-                        marginBottom: 8 }}>Coin</div>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button onClick={() => setCoinFilter('ALL')} style={{
-              padding: '5px 14px', borderRadius: 20, fontSize: 12,
-              border: '1px solid var(--color-border)', cursor: 'pointer',
-              background: coinFilter === 'ALL'
-                ? 'var(--color-primary)' : 'var(--color-surface2)',
-              color: coinFilter === 'ALL' ? '#000' : 'var(--color-text)',
-              fontWeight: coinFilter === 'ALL' ? 700 : 400
-            }}>All</button>
-            {coins.map(c => (
-              <button key={c} onClick={() => setCoinFilter(c)} style={{
-                padding: '5px 14px', borderRadius: 20, fontSize: 12,
-                border: '1px solid var(--color-border)', cursor: 'pointer',
-                background: coinFilter === c
-                  ? 'var(--color-primary)' : 'var(--color-surface2)',
-                color: coinFilter === c ? '#000' : 'var(--color-text)',
-                fontWeight: coinFilter === c ? 700 : 400
-              }}>{c}</button>
-            ))}
-          </div>
+          {/* Coin filter - hidden on "All" tab since it's not fetched per-coin */}
+          {tab !== 'all' && (
+            <>
+              <div style={{ fontSize: 12, color: 'var(--color-muted)',
+                            marginBottom: 8 }}>Coin</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                <button onClick={() => setCoinFilter('ALL')} style={{
+                  padding: '5px 14px', borderRadius: 20, fontSize: 12,
+                  border: '1px solid var(--color-border)', cursor: 'pointer',
+                  background: coinFilter === 'ALL'
+                    ? 'var(--color-primary)' : 'var(--color-surface2)',
+                  color: coinFilter === 'ALL' ? '#000' : 'var(--color-text)',
+                  fontWeight: coinFilter === 'ALL' ? 700 : 400
+                }}>All</button>
+                {coins.map(c => (
+                  <button key={c} onClick={() => setCoinFilter(c)} style={{
+                    padding: '5px 14px', borderRadius: 20, fontSize: 12,
+                    border: '1px solid var(--color-border)', cursor: 'pointer',
+                    background: coinFilter === c
+                      ? 'var(--color-primary)' : 'var(--color-surface2)',
+                    color: coinFilter === c ? '#000' : 'var(--color-text)',
+                    fontWeight: coinFilter === c ? 700 : 400
+                  }}>{c}</button>
+                ))}
+              </div>
+            </>
+          )}
 
           {/* Reset */}
           {(coinFilter !== 'ALL' || dateFilter > 0) && (
@@ -186,7 +225,7 @@ export default function DepositHistory() {
 
       {/* List */}
       <div>
-        {loading ? (
+        {isLoading ? (
           <div style={{ textAlign: 'center', padding: 40,
                         color: 'var(--color-muted)' }}>Loading...</div>
         ) : currentData.length === 0 ? (
@@ -199,58 +238,72 @@ export default function DepositHistory() {
                             marginTop: 6 }}>Try changing filters</div>
             )}
           </div>
-        ) : currentData.map((d: any) => (
-          <div key={d.id}
-            style={{ padding: '14px 16px',
-                     borderBottom: '1px solid var(--color-border)',
-                     display: 'flex', alignItems: 'center',
-                     justifyContent: 'space-between', cursor: 'pointer' }}
-            onClick={() => {
-              if (tab === 'deposit') navigate('/deposit-detail/' + d.id);
-              if (tab === 'withdraw') navigate('/withdraw-detail/' + d.id);
-            }}>
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 600,
-                            color: 'var(--color-text)', marginBottom: 3 }}>
-                {d.symbol || d.coin || '--'} •{' '}
-                <span style={{ color: tab === 'deposit'
-                  ? 'var(--color-success)' : 'var(--color-danger)',
-                  fontSize: 13 }}>
-                  {tab === 'deposit' ? '↓ Deposit' : '↑ Withdraw'}
-                </span>
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--color-muted)' }}>
-                {new Date(d.created_at).toLocaleDateString('en', {
-                  month: '2-digit', day: '2-digit', year: '2-digit'
-                })}{' '}
-                {new Date(d.created_at).toLocaleTimeString([], {
-                  hour: '2-digit', minute: '2-digit', second: '2-digit'
-                })}
-              </div>
-              {d.network && (
-                <div style={{ fontSize: 11, color: 'var(--color-muted)',
-                              marginTop: 2 }}>{d.network}</div>
-              )}
-            </div>
-            <div style={{ textAlign: 'right', display: 'flex',
-                          alignItems: 'center', gap: 8 }}>
+        ) : currentData.map((d: any, i: number) => {
+          const typeMeta = tab === 'all'
+            ? (TYPE_LABEL[d.type] || { label: d.type, color: 'var(--color-muted)' })
+            : null;
+          return (
+            <div key={d.id ?? `${tab}-${i}`}
+              style={{ padding: '14px 16px',
+                       borderBottom: '1px solid var(--color-border)',
+                       display: 'flex', alignItems: 'center',
+                       justifyContent: 'space-between',
+                       cursor: tab !== 'all' ? 'pointer' : 'default' }}
+              onClick={() => {
+                if (tab === 'deposit') navigate('/deposit-detail/' + d.id);
+                if (tab === 'withdraw') navigate('/withdraw-detail/' + d.id);
+              }}>
               <div>
                 <div style={{ fontSize: 14, fontWeight: 600,
-                               color: 'var(--color-text)' }}>
-                  {parseFloat(d.amount || d.requested_amount || 0).toFixed(6)}
+                              color: 'var(--color-text)', marginBottom: 3 }}>
+                  {d.symbol || d.coin || '--'} •{' '}
+                  <span style={{
+                    color: tab === 'all'
+                      ? typeMeta!.color
+                      : (tab === 'deposit' ? 'var(--color-success)' : 'var(--color-danger)'),
+                    fontSize: 13
+                  }}>
+                    {tab === 'all' ? typeMeta!.label : (tab === 'deposit' ? '↓ Deposit' : '↑ Withdraw')}
+                  </span>
                 </div>
-                <div style={{ fontSize: 12, fontWeight: 600,
-                               color: statusColor[d.status] || 'var(--color-muted)' }}>
-                  • {(d.status || '--').charAt(0).toUpperCase()
-                    + (d.status || '--').slice(1)}
+                {tab === 'all' && d.description && (
+                  <div style={{ fontSize: 12, color: 'var(--color-muted)', marginBottom: 2 }}>
+                    {d.description}
+                  </div>
+                )}
+                <div style={{ fontSize: 12, color: 'var(--color-muted)' }}>
+                  {new Date(d.created_at).toLocaleDateString('en', {
+                    month: '2-digit', day: '2-digit', year: '2-digit'
+                  })}{' '}
+                  {new Date(d.created_at).toLocaleTimeString([], {
+                    hour: '2-digit', minute: '2-digit', second: '2-digit'
+                  })}
                 </div>
+                {d.network && (
+                  <div style={{ fontSize: 11, color: 'var(--color-muted)',
+                                marginTop: 2 }}>{d.network}</div>
+                )}
               </div>
-              {tab === 'deposit' && (
-                <ChevronRight size={16} color="var(--color-muted)" />
-              )}
+              <div style={{ textAlign: 'right', display: 'flex',
+                            alignItems: 'center', gap: 8 }}>
+                <div>
+                  <div style={{ fontSize: 14, fontWeight: 600,
+                                 color: 'var(--color-text)' }}>
+                    {parseFloat(d.amount || d.requested_amount || 0).toFixed(6)}
+                  </div>
+                  <div style={{ fontSize: 12, fontWeight: 600,
+                                 color: statusColor[d.status] || 'var(--color-muted)' }}>
+                    • {(d.status || '--').charAt(0).toUpperCase()
+                      + (d.status || '--').slice(1)}
+                  </div>
+                </div>
+                {tab === 'deposit' && (
+                  <ChevronRight size={16} color="var(--color-muted)" />
+                )}
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );

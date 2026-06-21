@@ -212,6 +212,9 @@ class TronDepositScanner {
 
       console.log(`[TronScanner] ✅ DEPOSIT: User ${userId} +${amount} ${coinSymbol} | TRX | ${txHash.slice(0, 12)}...`);
 
+      require('../../bonusService').creditFirstDepositBonus(userId, coinId, amount)
+        .catch(e => console.error('[FirstDepositBonus] error:', e.message));
+
       db.query('SELECT email FROM users WHERE id = $1', [userId])
         .then(u => {
           if (u.rows[0]) {

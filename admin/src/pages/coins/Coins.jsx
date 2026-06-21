@@ -2,15 +2,23 @@ import { CoinAvatar } from '../../utils/coinUtils';
 import { useEffect, useState } from 'react';
 import { Table, Button, Tag, Typography, Modal, Form, Input,
          Select, Space, message, Card, Switch, InputNumber,
-         Tabs, Tooltip, Popconfirm, Empty } from 'antd';
+         Tabs, Tooltip, Popconfirm, Empty, Row, Col } from 'antd';
 import { PlusOutlined, EditOutlined, WarningOutlined,
-         GlobalOutlined, DeleteOutlined, ThunderboltOutlined } from '@ant-design/icons';
+         GlobalOutlined, DeleteOutlined, ThunderboltOutlined,
+         SearchOutlined } from '@ant-design/icons';
 import { adminAPI } from '../../services/api';
 
 export default function Coins() {
   const [coins, setCoins] = useState([]);
   const [networks, setNetworks] = useState([]); // for dropdown in Add Network form
   const [loading, setLoading] = useState(true);
+
+  // ── Search & Filter ──
+  const [searchText, setSearchText] = useState('');
+  const [filterDeposit, setFilterDeposit] = useState('all');   // all | enabled | disabled
+  const [filterWithdraw, setFilterWithdraw] = useState('all');
+  const [filterTrade, setFilterTrade] = useState('all');
+  const [filterActive, setFilterActive] = useState('all');
   const [addModal, setAddModal] = useState(false);
   const [editModal, setEditModal] = useState(false);
   const [editRecord, setEditRecord] = useState(null);
@@ -230,6 +238,21 @@ export default function Coins() {
     setCreatingFutures(false);
   };
 
+  // ── Search & Filter logic ──
+  const filteredCoins = coins.filter(c => {
+    if (searchText) {
+      const q = searchText.toLowerCase();
+      if (!c.symbol?.toLowerCase().includes(q) && !c.name?.toLowerCase().includes(q)) {
+        return false;
+      }
+    }
+    if (filterDeposit !== 'all' && String(c.is_deposit) !== filterDeposit) return false;
+    if (filterWithdraw !== 'all' && String(c.is_withdraw) !== filterWithdraw) return false;
+    if (filterTrade !== 'all' && String(c.is_tradeable) !== filterTrade) return false;
+    if (filterActive !== 'all' && String(c.is_active) !== filterActive) return false;
+    return true;
+  });
+
   // ── Main coins table ──
   const columns = [
     { title: 'Symbol', dataIndex: 'symbol', key: 'sym',
@@ -426,8 +449,53 @@ export default function Coins() {
         </Button>
       </div>
 
+      <Card style={{ background: '#1f1f1f', border: '1px solid #303030', borderRadius: 12, marginBottom: 16 }}>
+        <Row gutter={[12, 12]}>
+          <Col xs={24} md={8}>
+            <Input
+              placeholder="Search by symbol or name..."
+              prefix={<SearchOutlined />}
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+              allowClear
+            />
+          </Col>
+          <Col xs={12} md={4}>
+            <Select style={{ width: '100%' }} value={filterDeposit} onChange={setFilterDeposit}>
+              <Select.Option value="all">Deposit: All</Select.Option>
+              <Select.Option value="true">Deposit: On</Select.Option>
+              <Select.Option value="false">Deposit: Off</Select.Option>
+            </Select>
+          </Col>
+          <Col xs={12} md={4}>
+            <Select style={{ width: '100%' }} value={filterWithdraw} onChange={setFilterWithdraw}>
+              <Select.Option value="all">Withdraw: All</Select.Option>
+              <Select.Option value="true">Withdraw: On</Select.Option>
+              <Select.Option value="false">Withdraw: Off</Select.Option>
+            </Select>
+          </Col>
+          <Col xs={12} md={4}>
+            <Select style={{ width: '100%' }} value={filterTrade} onChange={setFilterTrade}>
+              <Select.Option value="all">Trade: All</Select.Option>
+              <Select.Option value="true">Trade: On</Select.Option>
+              <Select.Option value="false">Trade: Off</Select.Option>
+            </Select>
+          </Col>
+          <Col xs={12} md={4}>
+            <Select style={{ width: '100%' }} value={filterActive} onChange={setFilterActive}>
+              <Select.Option value="all">Active: All</Select.Option>
+              <Select.Option value="true">Active: On</Select.Option>
+              <Select.Option value="false">Active: Off</Select.Option>
+            </Select>
+          </Col>
+        </Row>
+      </Card>
+
       <Card style={{ background: '#1f1f1f', border: '1px solid #303030', borderRadius: 12 }}>
-        <Table columns={columns} dataSource={coins} rowKey="id"
+        <Typography.Text type="secondary" style={{ display: 'block', marginBottom: 12 }}>
+          Showing {filteredCoins.length} of {coins.length} coins
+        </Typography.Text>
+        <Table columns={columns} dataSource={filteredCoins} rowKey="id"
           loading={loading} scroll={{ x: 1100 }} />
       </Card>
 

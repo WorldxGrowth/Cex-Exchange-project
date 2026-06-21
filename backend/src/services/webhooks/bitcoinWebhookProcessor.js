@@ -149,6 +149,9 @@ class BitcoinWebhookProcessor {
 
       console.log(`[BitcoinWH] ✅ DEPOSIT CONFIRMED: User ${userId} +${amount} ${coinSymbol} | BTC | ${txHash.slice(0,12)}...`);
 
+      require('../bonusService').creditFirstDepositBonus(userId, coinId, amount)
+        .catch(e => console.error('[FirstDepositBonus] error:', e.message));
+
       db.query('SELECT email FROM users WHERE id = $1', [userId])
         .then(u => {
           if (u.rows[0]) {

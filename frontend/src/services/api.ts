@@ -69,7 +69,7 @@ export const walletAPI = {
   sendWithdrawalOTP:    ()             => api.post('/withdrawal/send-otp', {}),
   getWithdrawHistory:   (params?: any) => api.get('/withdrawal/history', { params }),
   transfer:             (d: any)       => api.post('/wallet/transfer', d),
-  getTransactions:      ()             => api.get('/wallet/transactions'),
+  getTransactions:      (params?: any)   => api.get('/wallet/transactions', { params }),
 };
 
 export const orderAPI = {

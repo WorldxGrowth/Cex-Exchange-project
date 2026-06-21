@@ -222,6 +222,8 @@ const approveKYC = async (req, res) => {
     if (action === 'approved') {
       await db.query('UPDATE users SET kyc_level=$1 WHERE id=$2',
         [kyc.rows[0].level || 1, kyc.rows[0].user_id]);
+      // Non-blocking - never let a bonus-credit failure break KYC approval itself
+      creditKycBonus(kyc.rows[0].user_id).catch(e => console.error('[KycBonus] error:', e.message));
     }
     const userRes = await db.query('SELECT email FROM users WHERE id=$1', [kyc.rows[0].user_id]);
     if (userRes.rows[0]) sendEmailSafe('sendKYCEmail', userRes.rows[0], action, rejection_reason);
@@ -2318,3 +2320,57 @@ const uploadBrandingImage = async (req, res) => {
 };
 
 module.exports = Object.assign(module.exports, { uploadBrandingImage });
+
+// ── KYC Bonus Helper ──────────────────────────────
+// Reads system_settings dynamically - admin can enable/disable or
+// change the amount anytime without any code/deploy needed.
+const creditKycBonus = async (userId) => {
+  const enabledRow = await db.query(
+    `SELECT value FROM system_settings WHERE key='kyc_bonus_enabled'`
+  );
+  if (enabledRow.rows[0]?.value !== 'true') return; // feature off, do nothing
+
+  const amountRow = await db.query(
+    `SELECT value FROM system_settings WHERE key='kyc_bonus_amount'`
+  );
+  const bonusAmount = parseFloat(amountRow.rows[0]?.value || 0);
+  if (bonusAmount <= 0) return;
+
+  const coinRow = await db.query(`SELECT id FROM coins WHERE symbol='USDT' LIMIT 1`);
+  const coinId = coinRow.rows[0]?.id;
+  if (!coinId) { console.error('[KycBonus] USDT coin not found'); return; }
+
+  const client = await db.pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const balRow = await client.query(`
+      SELECT available FROM balances
+      WHERE user_id=$1 AND coin_id=$2 AND account_type='spot' FOR UPDATE
+    `, [userId, coinId]);
+    const balBefore = parseFloat(balRow.rows[0]?.available || 0);
+
+    await client.query(`
+      INSERT INTO balances (user_id, coin_id, account_type, available, locked)
+      VALUES ($1,$2,'spot',$3,0)
+      ON CONFLICT (user_id, coin_id, account_type)
+      DO UPDATE SET available = balances.available + $3, updated_at = NOW()
+    `, [userId, coinId, bonusAmount]);
+
+    await client.query(`
+      INSERT INTO ledger (user_id, coin_id, type, amount, balance_before, balance_after, description)
+      VALUES ($1,$2,'bonus',$3,$4,$5,$6)
+    `, [userId, coinId, bonusAmount, balBefore, balBefore + bonusAmount,
+        `KYC completion bonus: ${bonusAmount} USDT`]);
+
+    await client.query('COMMIT');
+    console.log(`[KycBonus] ✅ Credited ${bonusAmount} USDT to user ${userId}`);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('[KycBonus] creditKycBonus error:', err.message);
+  } finally {
+    client.release();
+  }
+};
+
+module.exports = Object.assign(module.exports, { creditKycBonus });

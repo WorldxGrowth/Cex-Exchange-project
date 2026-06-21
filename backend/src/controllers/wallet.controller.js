@@ -359,36 +359,65 @@ const internalTransfer = async (req, res) => {
   }
 };
 
-// GET transaction history (existing - unchanged)
+// GET transaction history — UPGRADED: now includes ledger entries
+// (bonus, futures P&L, trades, etc - anything NOT already a deposit/
+// withdrawal) plus an optional `days` date-range filter.
 const getTransactionHistory = async (req, res) => {
   try {
-    const { page = 1, limit = 20, type } = req.query;
+    const { page = 1, limit = 20, type, days } = req.query;
     const offset = (page - 1) * limit;
+
+    const dayClause = days && parseInt(days) > 0 ? parseInt(days) : null;
 
     let rows = [];
 
     if (!type || type === 'deposit') {
+      const dParams = [req.user.id];
+      let dDateSql = '';
+      if (dayClause) { dParams.push(dayClause); dDateSql = ` AND d.created_at > NOW() - ($2 || ' days')::interval`; }
       const deposits = await db.query(`
         SELECT 'deposit' as type, d.amount, d.status, d.txhash,
-               d.created_at, c.symbol, n.short_name as network
+               d.created_at, c.symbol, n.short_name as network, NULL as description
         FROM deposits d
         JOIN coins c ON c.id = d.coin_id
         JOIN networks n ON n.id = d.network_id
-        WHERE d.user_id = $1
-      `, [req.user.id]);
+        WHERE d.user_id = $1${dDateSql}
+      `, dParams);
       rows = [...rows, ...deposits.rows];
     }
 
     if (!type || type === 'withdrawal') {
+      const wParams = [req.user.id];
+      let wDateSql = '';
+      if (dayClause) { wParams.push(dayClause); wDateSql = ` AND w.created_at > NOW() - ($2 || ' days')::interval`; }
       const withdrawals = await db.query(`
         SELECT 'withdrawal' as type, w.amount, w.status, w.txhash,
-               w.created_at, c.symbol, n.short_name as network
+               w.created_at, c.symbol, n.short_name as network, NULL as description
         FROM withdrawals w
         JOIN coins c ON c.id = w.coin_id
         JOIN networks n ON n.id = w.network_id
-        WHERE w.user_id = $1
-      `, [req.user.id]);
+        WHERE w.user_id = $1${wDateSql}
+      `, wParams);
       rows = [...rows, ...withdrawals.rows];
+    }
+
+    // 'other' = everything in the ledger that isn't already shown as a
+    // deposit/withdrawal above - bonus credits, trades, transfers,
+    // futures P&L, etc. Every money-movement in the system already
+    // writes to the ledger, so this single query covers all of them.
+    if (!type || type === 'other') {
+      const lParams = [req.user.id];
+      let lDateSql = '';
+      if (dayClause) { lParams.push(dayClause); lDateSql = ` AND l.created_at > NOW() - ($2 || ' days')::interval`; }
+      const ledgerRows = await db.query(`
+        SELECT l.type, l.amount, 'completed' as status, NULL as txhash,
+               l.created_at, c.symbol, NULL as network, l.description
+        FROM ledger l
+        JOIN coins c ON c.id = l.coin_id
+        WHERE l.user_id = $1
+          AND l.type NOT IN ('deposit', 'withdrawal')${lDateSql}
+      `, lParams);
+      rows = [...rows, ...ledgerRows.rows];
     }
 
     rows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
@@ -401,6 +430,7 @@ const getTransactionHistory = async (req, res) => {
       limit: parseInt(limit)
     });
   } catch (err) {
+    console.error('getTransactionHistory error:', err.message);
     return error(res, 'Failed to get transactions', 500);
   }
 };
