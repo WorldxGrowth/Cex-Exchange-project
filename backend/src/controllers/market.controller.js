@@ -524,3 +524,34 @@ const getCmsFooterPages = async (req, res) => {
 module.exports = Object.assign(module.exports, {
   getCmsPagePublic, getCmsFooterPages
 });
+
+// ================================
+// PUBLIC SITE SETTINGS (NEW — safe subset for branding/header use)
+// ================================
+// Only whitelisted keys are exposed here - NEVER include sensitive
+// settings (SMS provider keys, treasury IDs, fee rates an attacker
+// could use to game things, etc). This is the public-facing branding
+// config consumed by the Landing page header, popups, etc.
+const PUBLIC_SETTINGS_WHITELIST = [
+  'site_name', 'site_logo', 'site_logo_circle', 'site_logo_rectangle',
+  'site_favicon', 'meta_title', 'meta_description', 'meta_keywords',
+  'og_image', 'telegram_link', 'twitter_link', 'support_email',
+  'maintenance_mode', 'registration_open',
+];
+
+const getPublicSettings = async (req, res) => {
+  try {
+    const result = await db.query(
+      `SELECT key, value FROM system_settings WHERE key = ANY($1)`,
+      [PUBLIC_SETTINGS_WHITELIST]
+    );
+    const settingsMap = {};
+    result.rows.forEach(row => { settingsMap[row.key] = row.value; });
+    return success(res, settingsMap);
+  } catch (err) {
+    console.error('getPublicSettings:', err.message);
+    return error(res, 'Failed', 500);
+  }
+};
+
+module.exports = Object.assign(module.exports, { getPublicSettings });

@@ -37,7 +37,8 @@ router.get('/binance-klines/:symbol', async (req, res) => {
 });
 
 // CMS Public (no auth)
-const { getCmsPagePublic, getCmsFooterPages } = require('../controllers/market.controller');
+const { getCmsPagePublic, getCmsFooterPages, getPublicSettings } = require('../controllers/market.controller');
+router.get('/settings/public', getPublicSettings);
 router.get('/pages/footer', getCmsFooterPages);
 router.get('/pages/:slug',  getCmsPagePublic);
 

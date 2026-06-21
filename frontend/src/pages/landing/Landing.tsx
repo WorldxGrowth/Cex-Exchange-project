@@ -9,6 +9,7 @@ import HeroSection     from './components/HeroSection';
 import MarketSection   from './components/MarketSection';
 import FeaturesSection from './components/FeaturesSection';
 import StepsSection    from './components/StepsSection';
+import AppDownloadSection from './components/AppDownloadSection';
 import CTASection      from './components/CTASection';
 import LandingFooter   from './components/LandingFooter';
 
@@ -52,6 +53,7 @@ export default function Landing() {
       <MarketSection pairs={pairs} prices={prices} />
       <FeaturesSection />
       <StepsSection />
+      <AppDownloadSection />
       <CTASection />
       <LandingFooter footerPages={footerPages} />
     </div>

@@ -1,10 +1,15 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Zap, Menu, X } from 'lucide-react';
+import { useSiteSettings } from '../../../hooks/useSiteSettings';
 
 export default function LandingHeader() {
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
+  const { settings } = useSiteSettings();
+
+  const logoUrl = settings.site_logo;
+  const siteName = settings.site_name || 'VDExchange';
 
   return (
     <header style={{
@@ -16,18 +21,26 @@ export default function LandingHeader() {
       display: 'flex', alignItems: 'center', justifyContent: 'space-between'
     }}>
 
-      {/* LEFT: Logo */}
+      {/* LEFT: Logo (dynamic, from system_settings) */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}
         onClick={() => navigate('/')}>
-        <div style={{ width: 34, height: 34, borderRadius: 10,
-                      background: 'var(--color-primary)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      flexShrink: 0 }}>
-          <Zap size={20} color="#000" />
-        </div>
-        <span style={{ fontWeight: 800, fontSize: 18, color: 'var(--color-text)',
-                       whiteSpace: 'nowrap' }}>
-          VDExchange
+        {logoUrl ? (
+          <img src={logoUrl} alt={siteName}
+            style={{ width: 34, height: 34, borderRadius: 10, objectFit: 'contain', flexShrink: 0, background: 'transparent' }}
+            onError={(e: any) => { e.target.style.display = 'none'; }} />
+        ) : (
+          <div style={{ width: 34, height: 34, borderRadius: 10,
+                        background: 'var(--color-primary)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        flexShrink: 0 }}>
+            <Zap size={20} color="#000" />
+          </div>
+        )}
+        {/* Site name: hidden on mobile to save header space (logo alone is
+            enough for brand recognition there), shown on desktop */}
+        <span className="header-site-name" style={{ fontWeight: 800, fontSize: 18,
+                       color: 'var(--color-text)', whiteSpace: 'nowrap' }}>
+          {siteName}
         </span>
       </div>
 
@@ -36,7 +49,10 @@ export default function LandingHeader() {
                     position: 'absolute', left: '50%', transform: 'translateX(-50%)' }}
         className="desktop-only">
         <style>{`
-          @media (max-width: 767px) { .desktop-only { display: none !important; } }
+          @media (max-width: 767px) {
+            .desktop-only { display: none !important; }
+            .header-site-name { display: none !important; }
+          }
           @media (min-width: 768px) { .mobile-only { display: none !important; } }
         `}</style>
         {[['Markets', '/markets'], ['Trade', '/trade'], ['Futures', '/futures']].map(([label, path]) => (
