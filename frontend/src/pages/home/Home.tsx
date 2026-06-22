@@ -72,6 +72,14 @@ export default function Home() {
     return () => { isMounted.current = false; };
   }, []);
 
+  // Closing the popup (X button OR clicking the poster) marks it as
+  // viewed server-side, so show_once popups genuinely stop reappearing
+  // for this user.
+  const dismissPopup = (popupId: string | number) => {
+    setShowPopup(false);
+    notifAPI.markPopupViewed(popupId).catch(() => {});
+  };
+
   const steps = [
     { done: profileComplete, label: 'Complete Profile', action: '/edit-profile', icon: User },
     { done: kycLevel > 0,    label: 'Verify KYC',       action: '/kyc',          icon: Shield },
@@ -124,40 +132,29 @@ export default function Home() {
   return (
     <div style={{ background: 'var(--color-bg)', minHeight: '100vh', paddingBottom: 20 }}>
 
-      {/* Popup */}
+      {/* Popup - poster-only design: full image (no crop), no text
+          overlay, single corner-X to close. Clicking the poster itself
+          also opens button_url if one is set. */}
       {showPopup && popup && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 9999,
                       background: 'rgba(0,0,0,0.75)', display: 'flex',
                       alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-          <div style={{ background: 'var(--color-surface)', borderRadius: 20,
+          <div style={{ position: 'relative', borderRadius: 20,
                         width: '100%', maxWidth: 360, overflow: 'hidden',
-                        border: '1px solid var(--color-border)' }}>
+                        boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
+            <button onClick={() => dismissPopup(popup.id)} style={{
+              position: 'absolute', top: 10, right: 10, zIndex: 2,
+              width: 30, height: 30, borderRadius: '50%',
+              background: 'rgba(0,0,0,0.55)', border: 'none',
+              color: '#fff', cursor: 'pointer', fontSize: 16,
+              display: 'flex', alignItems: 'center', justifyContent: 'center'
+            }}>×</button>
             {popup.image_url && (
               <img src={popup.image_url} alt={popup.title}
-                style={{ width: '100%', maxHeight: 200, objectFit: 'cover' }} />
+                onClick={() => { if (popup.button_url) window.open(popup.button_url); dismissPopup(popup.id); }}
+                style={{ width: '100%', height: 'auto', display: 'block',
+                         objectFit: 'contain', cursor: popup.button_url ? 'pointer' : 'default' }} />
             )}
-            <div style={{ padding: '20px 20px 24px' }}>
-              <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 8 }}>{popup.title}</div>
-              {popup.content && (
-                <div style={{ fontSize: 14, color: 'var(--color-muted)',
-                              lineHeight: 1.6, marginBottom: 20 }}>{popup.content}</div>
-              )}
-              <div style={{ display: 'flex', gap: 10 }}>
-                {popup.link_url && (
-                  <button onClick={() => { window.open(popup.link_url); setShowPopup(false); }}
-                    style={{ flex: 1, padding: '12px', borderRadius: 12, border: 'none',
-                             background: 'var(--color-primary)', color: '#000',
-                             fontWeight: 700, cursor: 'pointer', fontSize: 14 }}>
-                    {popup.link_text || 'Learn More'}
-                  </button>
-                )}
-                <button onClick={() => setShowPopup(false)} style={{
-                  flex: 1, padding: '12px', borderRadius: 12,
-                  border: '1px solid var(--color-border)', background: 'none',
-                  color: 'var(--color-muted)', fontWeight: 600, cursor: 'pointer', fontSize: 14
-                }}>Close</button>
-              </div>
-            </div>
           </div>
         </div>
       )}

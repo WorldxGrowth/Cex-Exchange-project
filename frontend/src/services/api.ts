@@ -98,6 +98,7 @@ export const notifAPI = {
   markRead:         (id: string)       => api.put(`/notifications/${id}/read`),
   getBanners:       (platform = 'web') => api.get(`/notifications/banners?platform=${platform}`),
   getPopups:        (platform = 'web') => api.get(`/notifications/popups?platform=${platform}`),
+  markPopupViewed:  (popupId: string | number) => api.post(`/notifications/popups/${popupId}/view`),
   getAnnouncements: ()                 => api.get('/notifications/announcements'),
 };
 

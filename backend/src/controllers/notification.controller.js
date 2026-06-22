@@ -136,24 +136,50 @@ const getBanners = async (req, res) => {
   }
 };
 
-// GET popups
+// GET popups — FIXED: now actually excludes popups the user has already
+// seen today when show_once=true. Previously this just had a comment
+// placeholder ("Filter already viewed") and returned EVERY active popup
+// unconditionally, which is why it appeared to "not work" - the popup
+// would show on every single page load regardless of show_once.
 const getPopups = async (req, res) => {
   try {
     const { platform = 'all' } = req.query;
+    const userId = req.user?.id || null; // present if a valid token was sent, null for guests
 
-    const popups = await db.query(`
+    let query = `
       SELECT p.*
       FROM app_popups p
       WHERE p.is_active = true
         AND (p.platform = $1 OR p.platform = 'all')
         AND (p.starts_at IS NULL OR p.starts_at <= NOW())
         AND (p.ends_at IS NULL OR p.ends_at > NOW())
-      ORDER BY p.created_at DESC
-    `, [platform]);
+    `;
+    const params = [platform];
 
-    // Filter already viewed (if user logged in)
+    // Only logged-in users get the "already seen today" exclusion -
+    // guests always see show_once popups since we have no way to
+    // remember them between visits without an account.
+    if (userId) {
+      params.push(userId);
+      query += `
+        AND (
+          p.show_once = false
+          OR NOT EXISTS (
+            SELECT 1 FROM user_popup_views v
+            WHERE v.popup_id = p.id
+              AND v.user_id = $${params.length}
+              AND v.viewed_at::date = CURRENT_DATE
+          )
+        )
+      `;
+    }
+
+    query += ` ORDER BY p.created_at DESC`;
+
+    const popups = await db.query(query, params);
     return success(res, popups.rows);
   } catch (err) {
+    console.error('getPopups error:', err.message);
     return error(res, 'Failed to get popups', 500);
   }
 };
